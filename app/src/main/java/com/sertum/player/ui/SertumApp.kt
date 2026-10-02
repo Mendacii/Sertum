@@ -1,7 +1,6 @@
 package com.sertum.player.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -149,19 +148,25 @@ fun SertumApp() {
                 }
             },
         ) { padding ->
-            // The Scaffold hands the content an already-animated bottom inset,
-            // so `Modifier.padding(padding)` would resize the pages instantly
-            // while the bottom chrome is still sliding. Everything that is
-            // sized to the remaining height (the smallest page is the A-Z
-            // rail, which redistributes all its letters) would jump, stretch
-            // and snap back. Animate the inset on the chrome's own timing.
-            val targetBottomInset =
-                if (showNowPlaying) 0.dp else padding.calculateBottomPadding()
-            val bottomInset by animateDpAsState(
-                targetValue = targetBottomInset,
-                animationSpec = tween(BOTTOM_CHROME_ANIM_MS),
-                label = "bottomChromeInset",
-            )
+            // Reserve the bottom chrome's space permanently.
+            //
+            // The first attempt animated this inset and dropped it to zero
+            // while the full player was open, which made the content area
+            // taller and stretched the A-Z rail (measured on device: letter
+            // pitch 62px -> 77px, rail bottom 1985 -> 2353, i.e. past the
+            // bottom bar). The rail is sized by whatever height it is given,
+            // so no amount of easing fixes that - the height must not change
+            // at all. The bar fades and slides inside space that is always
+            // reserved, and the rail therefore never re-lays-out. That also
+            // matches what was asked for: keep it fixed at the size it has
+            // when the bar is in its normal position.
+            //
+            // `coerceAtLeast` keeps the reserve even if a frame reports a
+            // collapsed bar, and the non-zero guard avoids a one-frame flash
+            // of the un-reserved height during the first composition.
+            var reservedBottomInset by remember { mutableStateOf(0.dp) }
+            val reportedBottomInset = padding.calculateBottomPadding()
+            if (reportedBottomInset > 0.dp) reservedBottomInset = reportedBottomInset
             NavHost(
                 navController = navController,
                 startDestination = SertumDestinations.MAIN,
@@ -170,7 +175,7 @@ fun SertumApp() {
                         start = padding.calculateStartPadding(layoutDirection),
                         top = padding.calculateTopPadding(),
                         end = padding.calculateEndPadding(layoutDirection),
-                        bottom = bottomInset,
+                        bottom = reservedBottomInset,
                     ),
                 ),
                 enterTransition = { fadeIn(tween(120)) },
