@@ -21,8 +21,6 @@ import com.sertum.player.domain.playback.BitPerfectState
 import com.sertum.player.domain.playback.PlaybackErrorPolicy
 import com.sertum.player.domain.playback.QueueEngine
 import com.sertum.player.domain.playback.RepeatMode
-import com.sertum.player.domain.playback.ResumePositionStore
-import com.sertum.player.domain.playback.RoomResumePositionStore
 import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.playback.PlaybackStateHolder
 import kotlinx.coroutines.CoroutineScope
@@ -59,15 +57,30 @@ data class PlayableTrack(
 enum class UsbRecoveryState { NONE, DETACHED, RECOVERING, RECOVERED, FAILED }
 
 /**
+ * Playback memory was removed at the user's request (2026-10-02). Tapping a
+ * track used to restore the last stored position, so a track played to the end
+ * resumed at the end and the user had to scrub back by hand.
+ *
+ * Every explicit play therefore starts at the beginning. This constant is the
+ * single place that decision lives, so it is greppable and testable rather than
+ * an inline `0L` buried in an argument list.
+ *
+ * Consequence, accepted by the user: pausing and picking the same track again
+ * also restarts it.
+ */
+const val PLAYBACK_START_POSITION_MS: Long = 0L
+
+/**
  * Production playback wiring: library tracks -> Media3 -> routed output
- * (system or AAudio EXCLUSIVE) with the PRD 7.13 fault contract, resume
- * persistence and UI projection into [PlaybackStateHolder].
+ * (system or AAudio EXCLUSIVE) with the PRD 7.13 fault contract and UI
+ * projection into [PlaybackStateHolder].
+ *
+ * Holds no playback memory: see [PLAYBACK_START_POSITION_MS].
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlaybackCoordinator(
     private val context: Context,
     private val engine: PlayerEngine,
-    private val resumeStore: ResumePositionStore,
     private val diagnostics: DiagnosticsStore,
     private val markTrackUnplayable: suspend (Long) -> Unit = {},
 ) {
@@ -119,7 +132,6 @@ class PlaybackCoordinator(
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateUiState()
-                if (!isPlaying && playlist.isNotEmpty()) saveResumePosition()
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -163,10 +175,6 @@ class PlaybackCoordinator(
         })
 
         scope.launch {
-            val pruned = resumeStore.pruneOlderThan(System.currentTimeMillis() - RoomResumePositionStore.PRUNE_AFTER_MS)
-            if (pruned > 0) diagnostics.log(DiagnosticLevel.INFO, "resume", "pruned $pruned stale positions")
-        }
-        scope.launch {
             while (isActive) {
                 if (player.isPlaying || _outputMode.value == OutputMode.USB_EXCLUSIVE) updateUiState()
                 delay(POSITION_POLL_MS)
@@ -177,6 +185,18 @@ class PlaybackCoordinator(
 
     // ---- playback control ----
 
+    /**
+     * Starts [tracks] at [startIndex] **from the beginning**.
+     *
+     * Playback memory was removed at the user's request (2026-10-02): tapping a
+     * track used to restore the last position, so a track that had been played to
+     * the end resumed at the end and had to be scrubbed back by hand. Every
+     * explicit play now starts at 0.
+     *
+     * Consequence worth knowing: pausing and picking the same track again also
+     * restarts it. That follows from "remove the memory" and is the intended
+     * behaviour, not an oversight.
+     */
     fun playTracks(tracks: List<PlayableTrack>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         ensureNotificationPermission()
@@ -184,8 +204,11 @@ class PlaybackCoordinator(
         queue.setQueue(tracks.map { it.id }, startIndex)
         startPlaybackService()
         scope.launch {
-            val resume = resumeStore.get(tracks[startIndex].id) ?: 0L
-            player.setMediaItems(tracks.map { it.toMediaItem() }, startIndex, resume)
+            player.setMediaItems(
+                tracks.map { it.toMediaItem() },
+                startIndex,
+                PLAYBACK_START_POSITION_MS,
+            )
             player.prepare()
             player.play()
             updateUiState()
@@ -195,7 +218,6 @@ class PlaybackCoordinator(
     fun togglePlayPause() {
         if (playlist.isEmpty()) return
         if (player.isPlaying) {
-            saveResumePosition()
             player.pause()
         } else {
             ensureNotificationPermission()
@@ -207,7 +229,6 @@ class PlaybackCoordinator(
     }
 
     fun pause() {
-        saveResumePosition()
         player.pause()
         updateUiState()
     }
@@ -228,13 +249,12 @@ class PlaybackCoordinator(
 
     /**
      * Jump straight to a queue row (user feedback 2026-10-02). Shares the
-     * resume/service bookkeeping of [togglePlayPause] so tapping a row works
-     * even when playback was idle.
+     * service bookkeeping of [togglePlayPause] so tapping a row works even when
+     * playback was idle. Seeks to the start of the row, matching [playTracks].
      */
     fun skipToQueueIndex(index: Int) {
         if (index !in playlist.indices) return
         if (player.currentMediaItemIndex != index) {
-            saveResumePosition()
             player.seekTo(index, 0L)
         }
         ensureNotificationPermission()
@@ -291,7 +311,6 @@ class PlaybackCoordinator(
         if (mode == _outputMode.value) return
         _outputMode.value = mode
         val wasPlaying = player.isPlaying
-        saveResumePosition()
         player.stop()
         engine.router.exclusiveEnabled = mode == OutputMode.USB_EXCLUSIVE
         diagnostics.log(DiagnosticLevel.INFO, "output", "switched to $mode (cold restart)")
@@ -313,8 +332,7 @@ class PlaybackCoordinator(
 
     fun onUsbDeviceDetached() {
         if (_outputMode.value != OutputMode.USB_EXCLUSIVE) return
-        diagnostics.log(DiagnosticLevel.WARNING, "usb", "DAC detached; pausing and keeping queue/position")
-        saveResumePosition()
+        diagnostics.log(DiagnosticLevel.WARNING, "usb", "DAC detached; pausing and keeping queue")
         player.pause()
         _usbRecovery.value = UsbRecoveryState.DETACHED
         updateUiState()
@@ -358,7 +376,6 @@ class PlaybackCoordinator(
     }
 
     fun release() {
-        saveResumePosition()
         scope.cancel()
         player.release() // releases the routed audio output on the playback thread
     }
@@ -397,12 +414,6 @@ class PlaybackCoordinator(
     private fun currentTrack(): PlayableTrack? {
         val index = player.currentMediaItemIndex
         return playlist.getOrNull(index) ?: playlist.firstOrNull()
-    }
-
-    private fun saveResumePosition() {
-        val track = currentTrack() ?: return
-        val position = player.currentPosition.coerceAtLeast(0L)
-        scope.launch { resumeStore.put(track.id, position) }
     }
 
     private fun displayOutputMode(): OutputMode = when {

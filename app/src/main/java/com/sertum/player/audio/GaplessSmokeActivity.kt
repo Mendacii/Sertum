@@ -7,7 +7,6 @@ import android.util.Log
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.media3.common.Player
-import com.sertum.player.domain.playback.InMemoryResumePositionStore
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -32,7 +31,6 @@ class GaplessSmokeActivity : ComponentActivity() {
         val coordinator = PlaybackCoordinator(
             context = this,
             engine = engine,
-            resumeStore = InMemoryResumePositionStore(),
             diagnostics = diagnostics,
         )
         val startMs = SystemClock.elapsedRealtime()

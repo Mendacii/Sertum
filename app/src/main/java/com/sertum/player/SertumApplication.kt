@@ -21,7 +21,6 @@ import com.sertum.player.data.prefs.AppPreferences
 import com.sertum.player.data.scan.LibraryScanner
 import com.sertum.player.data.scan.SafDirectoryStore
 import com.sertum.player.data.scan.ScanStats
-import com.sertum.player.domain.playback.RoomResumePositionStore
 import com.sertum.player.ui.imaging.buildSertumImageLoader
 import java.io.File
 
@@ -114,17 +113,12 @@ class SertumApplication : Application() {
         LibraryScanner(this, database.libraryDao(), coverStore, safDirectoryStore)
     }
 
-    private val resumeStore: RoomResumePositionStore by lazy {
-        RoomResumePositionStore(database.libraryDao())
-    }
-
     val playerEngine: PlayerEngine by lazy { PlayerEngine(this) }
 
     val playbackController: PlaybackCoordinator by lazy {
         PlaybackCoordinator(
             context = this,
             engine = playerEngine,
-            resumeStore = resumeStore,
             diagnostics = diagnosticsStore,
             markTrackUnplayable = database.libraryDao()::markTrackUnplayable,
         )
