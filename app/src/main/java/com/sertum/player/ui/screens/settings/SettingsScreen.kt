@@ -252,26 +252,12 @@ fun SettingsScreen() {
                 },
             )
             SettingsTile(
-                label = stringResource(R.string.settings_app_details_short),
+                label = stringResource(R.string.settings_app_details_autostart),
                 icon = Icons.Filled.Settings,
                 emphasis = TileEmphasis.NAVIGABLE,
                 onClick = {
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.parse("package:" + context.packageName),
-                        ),
-                    )
-                },
-            )
-            SettingsTile(
-                label = stringResource(R.string.settings_autostart_short),
-                icon = Icons.Filled.Settings,
-                emphasis = TileEmphasis.NAVIGABLE,
-                onClick = {
-                    // Same destination as app details: HyperOS autostart lives on
-                    // the app's own info page, which is what the old combined
-                    // button opened.
+                    // HyperOS autostart lives on the app's own info page, which is
+                    // what this opens.
                     context.startActivity(
                         Intent(
                             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

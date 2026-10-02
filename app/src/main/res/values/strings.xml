@@ -66,7 +66,6 @@
     <string name="settings_scan_progress">Scanning: %1$d tracks found, %2$d parsed, %3$d failed</string>
     <string name="settings_rescan">Rescan library</string>
     <string name="settings_output_mode">Output mode</string>
-    <string name="settings_output_auto_standard">Auto / standard</string>
     <string name="settings_output_usb_exclusive">USB exclusive</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_system">Follow system</string>
@@ -74,8 +73,6 @@
     <string name="settings_language_en">English</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_dark_theme">Dark theme</string>
-    <string name="settings_dark_on">Near-pure black</string>
-    <string name="settings_dark_off">Paper light</string>
     <string name="settings_about">About</string>
     <string name="settings_offline">100% offline · no accounts · no telemetry</string>
     <string name="settings_diagnostics_summary">Diagnostics: %1$d entries · %2$d errors · %3$d day files (rolling %4$d days)</string>
@@ -83,7 +80,5 @@
     <string name="settings_background_playback">Background playback</string>
     <string name="settings_background_hint">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_battery_optimization">Battery optimization</string>
-    <string name="settings_app_details_autostart">App details / autostart</string>
-    <string name="settings_app_details_short">App details</string>
-    <string name="settings_autostart_short">Autostart</string>
+    <string name="settings_app_details_autostart">App details</string>
 </resources>

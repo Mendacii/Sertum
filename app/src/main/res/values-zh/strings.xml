@@ -64,7 +64,6 @@
     <string name="settings_scan_progress">扫描中：发现 %1$d 首，已解析 %2$d，失败 %3$d</string>
     <string name="settings_rescan">重新扫描曲库</string>
     <string name="settings_output_mode">输出模式</string>
-    <string name="settings_output_auto_standard">自动 / 常规</string>
     <string name="settings_output_usb_exclusive">USB 独占</string>
     <string name="settings_language">语言</string>
     <string name="settings_language_system">跟随系统</string>
@@ -72,8 +71,6 @@
     <string name="settings_language_en">English</string>
     <string name="settings_theme">主题</string>
     <string name="settings_dark_theme">深色主题</string>
-    <string name="settings_dark_on">近似纯黑</string>
-    <string name="settings_dark_off">纸感浅色</string>
     <string name="settings_about">关于</string>
     <string name="settings_offline">100% 离线 · 无账号 · 无遥测</string>
     <string name="settings_diagnostics_summary">诊断：%1$d 条 · %2$d 错误 · %3$d 个日志文件（滚动保留 %4$d 天）</string>
@@ -81,7 +78,5 @@
     <string name="settings_background_playback">后台播放</string>
     <string name="settings_background_hint">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_battery_optimization">电池优化</string>
-    <string name="settings_app_details_autostart">应用详情 / 自启动</string>
-    <string name="settings_app_details_short">应用详情</string>
-    <string name="settings_autostart_short">自启动</string>
+    <string name="settings_app_details_autostart">应用详情</string>
 </resources>
