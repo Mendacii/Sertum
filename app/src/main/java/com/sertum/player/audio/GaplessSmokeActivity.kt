@@ -34,7 +34,6 @@ class GaplessSmokeActivity : ComponentActivity() {
             engine = engine,
             resumeStore = InMemoryResumePositionStore(),
             diagnostics = diagnostics,
-            preferences = com.sertum.player.data.prefs.AppPreferences(this),
         )
         val startMs = SystemClock.elapsedRealtime()
         engine.player.addListener(object : Player.Listener {

@@ -39,7 +39,9 @@ class SertumApplication : Application() {
             onUsbDetached = { playbackController.onUsbDeviceDetached() },
             onBluetoothChanged = { playbackController.setBluetoothConnected(it) },
         )
-        preferences.restoreIntoMemory()
+        // Consume the durable preference before anything observes it. The
+        // output mode is deliberately not seeded here: it always starts on the
+        // standard route (see AppPreferences for why).
         if (preferences.scanOnStartup.value && hasMediaPermission()) {
             requestLibraryScan()
         }
@@ -124,7 +126,6 @@ class SertumApplication : Application() {
             engine = playerEngine,
             resumeStore = resumeStore,
             diagnostics = diagnosticsStore,
-            preferences = preferences,
             markTrackUnplayable = database.libraryDao()::markTrackUnplayable,
         )
     }

@@ -8,8 +8,10 @@ Human-readable iteration notes for the public repository. Fine-grained history l
   question "which build is on the phone?" is answerable from the device alone.
 - Scanning: new **Scan on startup** switch (default on, matching previous behaviour).
   Turned off, the library is only refreshed when you ask for it. The setting is durable
-  via `AppPreferences`; the output-mode selection now survives restarts too, which it
-  previously did not.
+  via `AppPreferences`.
+- Output mode deliberately still resets to the standard route on every launch. Persisting
+  it was tried and removed: restoring "USB exclusive" without checking that a DAC is
+  attached silently produced a shared stream while the UI still claimed exclusive output.
 - Now playing: round draggable thumb instead of the Material slider, plus elapsed/duration
   readouts next to it.
 - Now playing: the cover-shape control moved out of the artwork onto its own labelled row

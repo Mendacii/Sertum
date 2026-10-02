@@ -17,7 +17,6 @@ import com.sertum.player.audio.backend.AaudioExclusiveBackend
 import com.sertum.player.audio.session.PlaybackService
 import com.sertum.player.data.diagnostics.DiagnosticLevel
 import com.sertum.player.data.diagnostics.DiagnosticsStore
-import com.sertum.player.data.prefs.AppPreferences
 import com.sertum.player.domain.playback.BitPerfectState
 import com.sertum.player.domain.playback.PlaybackErrorPolicy
 import com.sertum.player.domain.playback.QueueEngine
@@ -70,7 +69,6 @@ class PlaybackCoordinator(
     private val engine: PlayerEngine,
     private val resumeStore: ResumePositionStore,
     private val diagnostics: DiagnosticsStore,
-    private val preferences: AppPreferences,
     private val markTrackUnplayable: suspend (Long) -> Unit = {},
 ) {
 
@@ -94,7 +92,7 @@ class PlaybackCoordinator(
     private val _playerState = MutableStateFlow(Player.STATE_IDLE)
     val playerState: StateFlow<Int> = _playerState.asStateFlow()
 
-    private val _outputMode = MutableStateFlow(preferences.outputMode.value)
+    private val _outputMode = MutableStateFlow(OutputMode.STANDARD)
     val outputMode: StateFlow<OutputMode> = _outputMode.asStateFlow()
 
     private val _bluetoothConnected = MutableStateFlow(false)
@@ -110,9 +108,12 @@ class PlaybackCoordinator(
 
     init {
         engine.router.exclusiveBackend = exclusiveBackend
-        // Honour the persisted selection instead of forcing the standard path:
-        // a user who picked USB exclusive expects it to survive a restart.
-        engine.router.exclusiveEnabled = _outputMode.value == OutputMode.USB_EXCLUSIVE
+        // Output mode is intentionally not restored from storage: it starts on
+        // the standard route every launch. Restoring "USB exclusive" without
+        // checking that a DAC is actually attached would silently fall back to
+        // a shared stream while the UI still claimed exclusive output.
+        _outputMode.value = OutputMode.STANDARD
+        engine.router.exclusiveEnabled = false
         engine.router.playWhenReady = player.playWhenReady
 
         player.addListener(object : Player.Listener {
@@ -289,7 +290,6 @@ class PlaybackCoordinator(
     fun switchOutputMode(mode: OutputMode) {
         if (mode == _outputMode.value) return
         _outputMode.value = mode
-        preferences.setOutputMode(mode)
         val wasPlaying = player.isPlaying
         saveResumePosition()
         player.stop()
