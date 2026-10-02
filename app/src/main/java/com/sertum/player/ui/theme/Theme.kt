@@ -21,11 +21,24 @@ private val DarkScheme = darkColorScheme(
     onPrimary = Color.Black,
     background = PureBlack,
     onBackground = TextPrimary,
-    surface = SurfaceBlack,
+    surface = PureBlack,
     onSurface = TextPrimary,
-    surfaceVariant = Color(0xFF111111),
+    // Every structural slot goes black (user feedback 2026-10-02). The
+    // `surfaceContainer*` roles are listed explicitly because
+    // `darkColorScheme()` does not populate them, and any role left unset
+    // falls back to the baseline purple-grey palette - which is what made
+    // sheets and bars read as "grey" against a near-black page.
+    surfaceVariant = PureBlack,
     onSurfaceVariant = TextSecondary,
-    outline = Color(0xFF2A2A2A),
+    surfaceContainerLowest = PureBlack,
+    surfaceContainerLow = PureBlack,
+    surfaceContainer = PureBlack,
+    surfaceContainerHigh = PureBlack,
+    surfaceContainerHighest = PureBlack,
+    surfaceDim = PureBlack,
+    surfaceBright = PureBlack,
+    outline = HairlineDark,
+    outlineVariant = HairlineDark,
     error = Color(0xFFCF6679),
 )
 

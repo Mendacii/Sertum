@@ -134,6 +134,13 @@ class AaudioExclusiveBackend : AudioOutputBackend {
     override fun getBufferSizeInFrames(): Int =
         streamInfo.framesPerBurst.takeIf { it > 0 }?.times(2) ?: 0
 
+    /**
+     * Last observed native stream parameters. Exposed for the digital-path
+     * audit (PS-PLAN-003 T2c): `sharingMode`/`deviceId` are the only proof
+     * that the route is genuinely exclusive *and* bound to the DAC.
+     */
+    fun observedStreamInfo(): AaudioStreamInfo = streamInfo
+
     private fun close() {
         started = false
         if (handle != 0L) {

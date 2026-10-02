@@ -2,6 +2,30 @@
 
 Human-readable iteration notes for the public repository. Fine-grained history lives in commit messages.
 
+## 2026-10-02 — M6 user feedback round
+
+- Build fingerprint: the About row now shows `<version>+<short sha> <build time>`, so the
+  question "which build is on the phone?" is answerable from the device alone.
+- Scanning: new **Scan on startup** switch (default on, matching previous behaviour).
+  Turned off, the library is only refreshed when you ask for it. The setting is durable
+  via `AppPreferences`; the output-mode selection now survives restarts too, which it
+  previously did not.
+- Now playing: round draggable thumb instead of the Material slider, plus elapsed/duration
+  readouts next to it.
+- Now playing: the cover-shape control moved out of the artwork onto its own labelled row
+  and toggles both ways with one button.
+- Queue: tapping a row now starts that track.
+- Dark theme: backgrounds go fully black. The bottom sheet's default Material container
+  colour was the cause of the grey player surface; unset `surfaceContainer*` roles let the
+  baseline palette leak into sheets and bars. Divider tones carry the structure instead.
+- Library pages: the A-Z rail no longer stretches to the bottom of the screen when the
+  full player opens or closes. The Scaffold's bottom inset used to change instantly while
+  the bottom bar animated, so every page resized a frame early; the inset is now animated
+  on the bar's own timing and the rail clips its transient measurements.
+- Digital-path audit scaffolding for USB exclusive: an append-only PCM observation hook on
+  the exclusive adapter with bit-exact transfer tests, a read-only device evidence script,
+  and an instrumented audit that records the native stream's sharing mode and device.
+
 ## 2026-08-16 — M4 UI
 
 - Design tokens: near-pure black + warm gold, serif display/sans body, dark/light themes.

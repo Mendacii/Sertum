@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
+import com.sertum.player.sertumBuildLabel
 import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.settings.LanguageOption
 import com.sertum.player.ui.settings.SettingsStateHolder
@@ -77,6 +78,21 @@ fun SettingsScreen() {
             .padding(16.dp),
     ) {
         SectionTitle(stringResource(R.string.settings_scanning))
+        // Durable in AppPreferences, not SettingsStateHolder: Application.onCreate
+        // reads it before any UI exists.
+        val scanOnStartup by app.preferences.scanOnStartup.collectAsState()
+        RowSwitch(
+            title = stringResource(R.string.settings_scan_on_startup_title),
+            subtitle = stringResource(
+                if (scanOnStartup) {
+                    R.string.settings_scan_on_startup_on
+                } else {
+                    R.string.settings_scan_on_startup_off
+                },
+            ),
+            checked = scanOnStartup,
+            onCheckedChange = { app.preferences.setScanOnStartup(it) },
+        )
         RowSwitch(
             title = stringResource(R.string.settings_full_scan_title),
             subtitle = stringResource(
@@ -220,7 +236,7 @@ fun SettingsScreen() {
         }
 
         SectionTitle(stringResource(R.string.settings_about))
-        Text("Sertum 0.1.0", style = MaterialTheme.typography.bodyLarge)
+        Text("Sertum ${sertumBuildLabel()}", style = MaterialTheme.typography.bodyLarge)
         Text(
             text = stringResource(R.string.settings_offline),
             style = MaterialTheme.typography.bodyMedium,

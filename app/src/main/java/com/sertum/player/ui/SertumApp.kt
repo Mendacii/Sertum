@@ -1,6 +1,7 @@
 package com.sertum.player.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -8,6 +9,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -39,7 +43,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -68,6 +75,12 @@ private val topLevel = listOf(
     TopLevelDestination(R.string.nav_settings, { Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.nav_settings)) }),
 )
 
+/**
+ * Shared timing for the bottom chrome and the content inset it reserves, so
+ * the two stop moving on the same frame instead of one outrunning the other.
+ */
+private const val BOTTOM_CHROME_ANIM_MS = 120
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SertumApp() {
@@ -91,6 +104,8 @@ fun SertumApp() {
         }
     }
 
+    val layoutDirection = LocalLayoutDirection.current
+
     SertumTheme(darkTheme = settings.darkTheme) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -100,8 +115,8 @@ fun SertumApp() {
                 // sheet slides away the bottom chrome slides back up quickly.
                 AnimatedVisibility(
                     visible = !showNowPlaying,
-                    enter = slideInVertically { it } + fadeIn(tween(120)),
-                    exit = slideOutVertically { it } + fadeOut(tween(100)),
+                    enter = slideInVertically { it } + fadeIn(tween(BOTTOM_CHROME_ANIM_MS)),
+                    exit = slideOutVertically { it } + fadeOut(tween(BOTTOM_CHROME_ANIM_MS)),
                 ) {
                     Column {
                         MiniPlayer(onExpand = { showNowPlaying = true })
@@ -134,10 +149,30 @@ fun SertumApp() {
                 }
             },
         ) { padding ->
+            // The Scaffold hands the content an already-animated bottom inset,
+            // so `Modifier.padding(padding)` would resize the pages instantly
+            // while the bottom chrome is still sliding. Everything that is
+            // sized to the remaining height (the smallest page is the A-Z
+            // rail, which redistributes all its letters) would jump, stretch
+            // and snap back. Animate the inset on the chrome's own timing.
+            val targetBottomInset =
+                if (showNowPlaying) 0.dp else padding.calculateBottomPadding()
+            val bottomInset by animateDpAsState(
+                targetValue = targetBottomInset,
+                animationSpec = tween(BOTTOM_CHROME_ANIM_MS),
+                label = "bottomChromeInset",
+            )
             NavHost(
                 navController = navController,
                 startDestination = SertumDestinations.MAIN,
-                modifier = Modifier.padding(padding),
+                modifier = Modifier.padding(
+                    PaddingValues(
+                        start = padding.calculateStartPadding(layoutDirection),
+                        top = padding.calculateTopPadding(),
+                        end = padding.calculateEndPadding(layoutDirection),
+                        bottom = bottomInset,
+                    ),
+                ),
                 enterTransition = { fadeIn(tween(120)) },
                 exitTransition = { fadeOut(tween(90)) },
                 popEnterTransition = { fadeIn(tween(120)) },
@@ -174,6 +209,10 @@ fun SertumApp() {
         if (showNowPlaying) {
             ModalBottomSheet(
                 onDismissRequest = { showNowPlaying = false },
+                // Material's default sheet colour is the baseline light
+                // `surfaceContainerLow`, not the theme background, so the whole
+                // player read as grey on a black page (user feedback 2026-10-02).
+                containerColor = MaterialTheme.colorScheme.background,
                 sheetState = rememberModalBottomSheetState(
                     skipPartiallyExpanded = true,
                     confirmValueChange = { target ->

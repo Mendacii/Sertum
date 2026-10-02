@@ -32,6 +32,15 @@ class BackendAudioOutput(
     private val outputConfig: androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig,
     private val targetBitDepth: Int = 24,
     private val playWhenReady: () -> Boolean = { false },
+    /**
+     * Append-only observation hook for the digital-path audit (PS-PLAN-003
+     * T2a): receives the exact bytes about to be handed to the backend.
+     *
+     * Contract: the callback must not mutate the array, and a throwing
+     * callback must not break playback. `null` (the production default) means
+     * this adapter behaves exactly as it did before the hook existed.
+     */
+    private val pcmTap: ((ByteArray) -> Unit)? = null,
 ) : androidx.media3.exoplayer.audio.AudioOutput {
 
     private val listeners = CopyOnWriteArrayList<androidx.media3.exoplayer.audio.AudioOutput.Listener>()
@@ -178,6 +187,11 @@ class BackendAudioOutput(
     private fun drainPending() {
         if (pendingFrames <= 0) return
         val expectedFrames = pending.size / packedFrameBytes
+        pcmTap?.let { tap ->
+            val submitted = ByteArray(pending.size)
+            pending.copyInto(submitted)
+            runCatching { tap(submitted) }
+        }
         val writtenFrames = backend.writePcm(pending, 0, pending.size).getOrElse {
             throw androidx.media3.exoplayer.audio.AudioOutput.WriteException(
                 PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,

@@ -1,9 +1,23 @@
+import java.time.Instant
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     jacoco
 }
+
+// Build fingerprint for the "About" row. Several review rounds were spent
+// guessing which APK was on the phone; a commit sha plus a build timestamp
+// makes that question answerable from the device alone.
+val sertumGitSha: String = runCatching {
+    val process = providers.exec {
+        commandLine("git", "rev-parse", "--short=7", "HEAD")
+    }
+    process.standardOutput.asText.get().trim()
+}.getOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
+
+val sertumBuildTime: String = Instant.now().toString()
 
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
@@ -20,6 +34,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SERTUM_BUILD_SHA", "\"$sertumGitSha\"")
+        buildConfigField("String", "SERTUM_BUILD_TIME", "\"$sertumBuildTime\"")
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -55,6 +72,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {

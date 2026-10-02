@@ -37,6 +37,8 @@
     <string name="cd_next">下一首</string>
     <string name="cd_queue">队列</string>
     <string name="cd_toggle_cover_shape">切换封面形状</string>
+    <string name="now_playing_cover_square">方形封面</string>
+    <string name="now_playing_cover_round">旋转圆形封面</string>
     <string name="cd_back_to_player">返回播放页</string>
     <string name="cd_move_up">上移</string>
     <string name="cd_move_down">下移</string>
@@ -51,6 +53,9 @@
 
     <!-- 设置 -->
     <string name="settings_scanning">扫描</string>
+    <string name="settings_scan_on_startup_title">启动时扫描</string>
+    <string name="settings_scan_on_startup_on">每次启动 App 都会重新扫描曲库</string>
+    <string name="settings_scan_on_startup_off">仅在手动重新扫描或添加目录后扫描</string>
     <string name="settings_full_scan_title">全盘扫描（高级）</string>
     <string name="settings_full_scan_on">已授权所有文件访问</string>
     <string name="settings_full_scan_off">默认关闭；仅手动开启</string>

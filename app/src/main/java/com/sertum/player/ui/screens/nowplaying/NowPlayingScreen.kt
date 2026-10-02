@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,7 +49,9 @@ import coil3.compose.AsyncImage
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.data.covers.CoverResolver
+import com.sertum.player.ui.components.PlaybackScrubber
 import com.sertum.player.ui.components.UsbBadge
+import com.sertum.player.ui.components.formatDuration
 import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.playback.PlaybackStateHolder
 import com.sertum.player.ui.settings.SettingsStateHolder
@@ -116,16 +117,35 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                         .border(4.dp, WarmGoldDim, CircleShape),
                 )
             }
+        }
+
+        // The cover-shape control lives outside the artwork (user feedback
+        // 2026-10-02): one toggle for both directions, on a labelled row.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(
+                    if (settings.roundCover) {
+                        R.string.now_playing_cover_round
+                    } else {
+                        R.string.now_playing_cover_square
+                    },
+                ),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
             IconButton(
                 onClick = { SettingsStateHolder.update { it.copy(roundCover = !it.roundCover) } },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
             ) {
                 Icon(
                     Icons.Filled.Album,
                     contentDescription = stringResource(R.string.cd_toggle_cover_shape),
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }
@@ -178,20 +198,36 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
             val displayedPosition = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
             var dragging by remember { mutableStateOf(false) }
             var dragValue by remember { mutableFloatStateOf(0f) }
-            Slider(
-                value = if (dragging) dragValue else displayedPosition,
-                onValueChange = {
+            val shownFraction = if (dragging) dragValue else displayedPosition
+            PlaybackScrubber(
+                progress = shownFraction,
+                onProgressChange = {
                     dragging = true
                     dragValue = it
                 },
-                onValueChangeFinished = {
+                onProgressChangeFinished = {
                     if (state.durationMs > 0) {
                         controller.seekTo((dragValue * state.durationMs).toLong())
                     }
                     dragging = false
                 },
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 12.dp),
             )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = formatDuration((shownFraction.coerceIn(0f, 1f) * state.durationMs).toLong()),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = formatDuration(state.durationMs),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Row(
                 Modifier.fillMaxWidth(),

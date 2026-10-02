@@ -38,6 +38,8 @@
     <string name="cd_next">Next</string>
     <string name="cd_queue">Queue</string>
     <string name="cd_toggle_cover_shape">Toggle cover shape</string>
+    <string name="now_playing_cover_square">Square cover</string>
+    <string name="now_playing_cover_round">Rotating round cover</string>
     <string name="cd_back_to_player">Back to player</string>
     <string name="cd_move_up">Move up</string>
     <string name="cd_move_down">Move down</string>
@@ -52,6 +54,9 @@
 
     <!-- Settings -->
     <string name="settings_scanning">Scanning</string>
+    <string name="settings_scan_on_startup_title">Scan on startup</string>
+    <string name="settings_scan_on_startup_on">Rescans the library every time the app starts</string>
+    <string name="settings_scan_on_startup_off">Rescans only when you ask, or after adding a folder</string>
     <string name="settings_full_scan_title">Full-disk scan (advanced)</string>
     <string name="settings_full_scan_on">All files access enabled</string>
     <string name="settings_full_scan_off">Off by default; opt-in only</string>

@@ -17,6 +17,7 @@ import com.sertum.player.data.covers.CoverStore
 import com.sertum.player.data.db.SertumDatabase
 import com.sertum.player.data.diagnostics.DiagnosticLevel
 import com.sertum.player.data.diagnostics.DiagnosticsStore
+import com.sertum.player.data.prefs.AppPreferences
 import com.sertum.player.data.scan.LibraryScanner
 import com.sertum.player.data.scan.SafDirectoryStore
 import com.sertum.player.data.scan.ScanStats
@@ -38,7 +39,8 @@ class SertumApplication : Application() {
             onUsbDetached = { playbackController.onUsbDeviceDetached() },
             onBluetoothChanged = { playbackController.setBluetoothConnected(it) },
         )
-        if (hasMediaPermission()) {
+        preferences.restoreIntoMemory()
+        if (preferences.scanOnStartup.value && hasMediaPermission()) {
             requestLibraryScan()
         }
         ensureMediaController()
@@ -97,6 +99,9 @@ class SertumApplication : Application() {
 
     val coverStore: CoverStore by lazy { CoverStore(filesDir) }
 
+    /** Durable user preferences; read once in [onCreate] before the first scan. */
+    val preferences: AppPreferences by lazy { AppPreferences(this) }
+
     val safDirectoryStore: SafDirectoryStore by lazy { SafDirectoryStore(this) }
 
     val diagnosticsStore: DiagnosticsStore by lazy {
@@ -119,6 +124,7 @@ class SertumApplication : Application() {
             engine = playerEngine,
             resumeStore = resumeStore,
             diagnostics = diagnosticsStore,
+            preferences = preferences,
             markTrackUnplayable = database.libraryDao()::markTrackUnplayable,
         )
     }

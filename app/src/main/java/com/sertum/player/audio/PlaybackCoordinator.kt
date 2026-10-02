@@ -17,6 +17,7 @@ import com.sertum.player.audio.backend.AaudioExclusiveBackend
 import com.sertum.player.audio.session.PlaybackService
 import com.sertum.player.data.diagnostics.DiagnosticLevel
 import com.sertum.player.data.diagnostics.DiagnosticsStore
+import com.sertum.player.data.prefs.AppPreferences
 import com.sertum.player.domain.playback.BitPerfectState
 import com.sertum.player.domain.playback.PlaybackErrorPolicy
 import com.sertum.player.domain.playback.QueueEngine
@@ -69,6 +70,7 @@ class PlaybackCoordinator(
     private val engine: PlayerEngine,
     private val resumeStore: ResumePositionStore,
     private val diagnostics: DiagnosticsStore,
+    private val preferences: AppPreferences,
     private val markTrackUnplayable: suspend (Long) -> Unit = {},
 ) {
 
@@ -92,7 +94,7 @@ class PlaybackCoordinator(
     private val _playerState = MutableStateFlow(Player.STATE_IDLE)
     val playerState: StateFlow<Int> = _playerState.asStateFlow()
 
-    private val _outputMode = MutableStateFlow(OutputMode.STANDARD)
+    private val _outputMode = MutableStateFlow(preferences.outputMode.value)
     val outputMode: StateFlow<OutputMode> = _outputMode.asStateFlow()
 
     private val _bluetoothConnected = MutableStateFlow(false)
@@ -108,7 +110,9 @@ class PlaybackCoordinator(
 
     init {
         engine.router.exclusiveBackend = exclusiveBackend
-        engine.router.exclusiveEnabled = false
+        // Honour the persisted selection instead of forcing the standard path:
+        // a user who picked USB exclusive expects it to survive a restart.
+        engine.router.exclusiveEnabled = _outputMode.value == OutputMode.USB_EXCLUSIVE
         engine.router.playWhenReady = player.playWhenReady
 
         player.addListener(object : Player.Listener {
@@ -221,6 +225,24 @@ class PlaybackCoordinator(
         player.seekToPreviousMediaItem()
     }
 
+    /**
+     * Jump straight to a queue row (user feedback 2026-10-02). Shares the
+     * resume/service bookkeeping of [togglePlayPause] so tapping a row works
+     * even when playback was idle.
+     */
+    fun skipToQueueIndex(index: Int) {
+        if (index !in playlist.indices) return
+        if (player.currentMediaItemIndex != index) {
+            saveResumePosition()
+            player.seekTo(index, 0L)
+        }
+        ensureNotificationPermission()
+        startPlaybackService()
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        player.play()
+        updateUiState()
+    }
+
     fun setRepeat(mode: RepeatMode) {
         queue.setRepeat(mode)
         player.repeatMode = when (mode) {
@@ -267,6 +289,7 @@ class PlaybackCoordinator(
     fun switchOutputMode(mode: OutputMode) {
         if (mode == _outputMode.value) return
         _outputMode.value = mode
+        preferences.setOutputMode(mode)
         val wasPlaying = player.isPlaying
         saveResumePosition()
         player.stop()

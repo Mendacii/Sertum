@@ -1,5 +1,6 @@
 package com.sertum.player.ui.screens.nowplaying
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -93,7 +94,13 @@ fun QueueScreen(onBack: (() -> Unit)? = null) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             itemsIndexed(state.queue) { index, title ->
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        // Tapping a row starts that track (user feedback
+                        // 2026-10-02); the row buttons below consume their own
+                        // clicks and do not fall through to this one.
+                        .clickable { controller.skipToQueueIndex(index) }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(

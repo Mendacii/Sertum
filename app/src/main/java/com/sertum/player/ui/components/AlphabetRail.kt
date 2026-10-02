@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,6 +50,11 @@ fun BoxScope.AlphabetRail(
             .align(Alignment.CenterEnd)
             .fillMaxHeight()
             .width(22.dp)
+            // The rail is deliberately sized by its parent so it tracks the
+            // list area; clipping keeps a transient measure (a bottom sheet
+            // opening, a bar animating back) from painting letters outside
+            // the rail while the parent height is still settling.
+            .clipToBounds()
             .pointerInput(letters) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
