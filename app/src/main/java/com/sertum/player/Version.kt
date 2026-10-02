@@ -25,10 +25,14 @@ internal fun buildConfigString(field: String, fallback: String): String = runCat
 }.getOrNull() ?: fallback
 
 /**
- * The one string that identifies exactly which build is installed:
- * `0.1.0+bf1f52a 2026-08-17T00:09:12Z`.
+ * Identifies exactly which build is installed: `0.1.0+e5e34e5 2026-10-02T01:23:45Z`.
+ *
+ * Diagnostic provenance, not a user-facing version. The About screen shows
+ * [SERTUM_VERSION] alone, because a version string carrying a commit hash and a
+ * timestamp reads as noise to a user; this fingerprint belongs in the
+ * diagnostics export, where it answers "which build produced this log".
  */
-fun sertumBuildLabel(
+fun sertumBuildFingerprint(
     version: String = SERTUM_VERSION,
     sha: String = buildConfigString("SERTUM_BUILD_SHA", SERTUM_FALLBACK_SHA),
     buildTime: String = buildConfigString("SERTUM_BUILD_TIME", SERTUM_FALLBACK_BUILD_TIME),

@@ -58,9 +58,15 @@ class DiagnosticsStore(
         .sortedBy { it.name }
         .flatMap { file -> file.readLines().filter { it.isNotBlank() } }
 
-    /** Human-readable export body; the caller writes it to the user-chosen document. */
+    /**
+     * Human-readable export body; the caller writes it to the user-chosen document.
+     *
+     * [buildFingerprint] is supplied by the caller rather than read here so this
+     * data-layer class keeps no dependency on the app-level version helpers. It is
+     * what makes an exported log traceable back to an exact build.
+     */
     @Synchronized
-    fun exportText(): String {
+    fun exportText(buildFingerprint: String = ""): String {
         pruneOldFiles()
         val now = clock()
         val snapshot = counts
@@ -71,8 +77,11 @@ class DiagnosticsStore(
             "Errors=${snapshot.totalErrors}",
             "Files=${snapshot.fileCount}",
             "RetentionDays=$retentionDays",
-            "",
-        )
+        ) + if (buildFingerprint.isNotBlank()) {
+            listOf("Build=$buildFingerprint")
+        } else {
+            emptyList()
+        } + listOf("")
         return (header + readAll()).joinToString("\n") + "\n"
     }
 

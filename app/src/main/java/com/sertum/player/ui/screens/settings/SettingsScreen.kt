@@ -43,7 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
-import com.sertum.player.sertumBuildLabel
+import com.sertum.player.SERTUM_VERSION
+import com.sertum.player.sertumBuildFingerprint
 import com.sertum.player.ui.components.SettingsTile
 import com.sertum.player.ui.components.SettingsTileGrid
 import com.sertum.player.ui.components.TileEmphasis
@@ -76,7 +77,10 @@ fun SettingsScreen() {
         if (uri != null) {
             runCatching {
                 context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(app.diagnosticsStore.exportText().toByteArray(Charsets.UTF_8))
+                    out.write(
+                        app.diagnosticsStore.exportText(sertumBuildFingerprint())
+                            .toByteArray(Charsets.UTF_8),
+                    )
                 }
             }
         }
@@ -269,7 +273,13 @@ fun SettingsScreen() {
         }
 
         SectionTitle(stringResource(R.string.settings_about))
-        Text("Sertum ${sertumBuildLabel()}", style = MaterialTheme.typography.bodyLarge)
+        // Just the version. The build fingerprint (commit + timestamp) used to be
+        // appended here for M6 device verification, which made the version read as
+        // a string of noise; it now travels in the diagnostics export instead.
+        Text(
+            text = "${stringResource(R.string.app_name)} $SERTUM_VERSION",
+            style = MaterialTheme.typography.bodyLarge,
+        )
         Text(
             text = stringResource(R.string.settings_offline),
             style = MaterialTheme.typography.bodyMedium,
