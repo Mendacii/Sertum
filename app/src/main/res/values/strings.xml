@@ -54,13 +54,13 @@
 
     <!-- Settings -->
     <string name="settings_scanning">Scanning</string>
-    <string name="settings_scan_on_startup_title">Scan on startup</string>
-    <string name="settings_scan_on_startup_on">Rescans the library every time the app starts</string>
-    <string name="settings_scan_on_startup_off">Rescans only when you ask, or after adding a folder</string>
-    <string name="settings_full_scan_title">Full-disk scan (advanced)</string>
-    <string name="settings_full_scan_on">All files access enabled</string>
-    <string name="settings_full_scan_off">Off by default; opt-in only</string>
-    <string name="settings_add_folder">Add music folder (SAF)</string>
+    <!-- Short tile labels for the settings grid; the long titles above stay
+         where a sentence is genuinely needed. -->
+    <string name="settings_scan_on_startup_short">Scan</string>
+    <string name="settings_full_scan_short">Full scan</string>
+    <string name="settings_add_folder_short">Add folder</string>
+    <string name="settings_rescan_short">Rescan</string>
+    <string name="settings_output_auto_short">Standard</string>
     <string name="settings_remove_folder">Remove</string>
     <string name="settings_scan_collecting">Scanning folders…</string>
     <string name="settings_scan_progress">Scanning: %1$d tracks found, %2$d parsed, %3$d failed</string>
@@ -84,4 +84,6 @@
     <string name="settings_background_hint">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_battery_optimization">Battery optimization</string>
     <string name="settings_app_details_autostart">App details / autostart</string>
+    <string name="settings_app_details_short">App details</string>
+    <string name="settings_autostart_short">Autostart</string>
 </resources>

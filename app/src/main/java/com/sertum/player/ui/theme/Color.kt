@@ -12,6 +12,13 @@ val PureBlack = Color(0xFF000000)
  * if those were also `#000000` they would dissolve into the background.
  */
 val SurfaceBlack = Color(0xFF0A0A0A)
+
+/**
+ * One step above [SurfaceBlack]. Settings action tiles use it so a tappable
+ * action reads as a different object from a state tile, without spending gold
+ * on something that carries no state.
+ */
+val SurfaceRaised = Color(0xFF141414)
 val WarmGold = Color(0xFFC9A96E)
 val WarmGoldDim = Color(0x669A7A45)
 val TextPrimary = Color(0xFFF2F2F2)

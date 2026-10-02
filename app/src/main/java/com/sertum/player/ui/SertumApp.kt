@@ -82,11 +82,11 @@ private const val BOTTOM_CHROME_ANIM_MS = 120
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SertumApp() {
+fun SertumApp(initialTab: Int? = null) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(initialTab ?: 0) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
     val settings by com.sertum.player.ui.settings.SettingsStateHolder.state.collectAsState()

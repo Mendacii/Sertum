@@ -53,13 +53,12 @@
 
     <!-- 设置 -->
     <string name="settings_scanning">扫描</string>
-    <string name="settings_scan_on_startup_title">启动时扫描</string>
-    <string name="settings_scan_on_startup_on">每次启动 App 都会重新扫描曲库</string>
-    <string name="settings_scan_on_startup_off">仅在手动重新扫描或添加目录后扫描</string>
-    <string name="settings_full_scan_title">全盘扫描（高级）</string>
-    <string name="settings_full_scan_on">已授权所有文件访问</string>
-    <string name="settings_full_scan_off">默认关闭；仅手动开启</string>
-    <string name="settings_add_folder">添加音乐文件夹（SAF）</string>
+    <!-- 设置网格用的短标签；上面那组长标题只在确实需要成句的地方保留 -->
+    <string name="settings_scan_on_startup_short">启动扫描</string>
+    <string name="settings_full_scan_short">全盘扫描</string>
+    <string name="settings_add_folder_short">添加文件夹</string>
+    <string name="settings_rescan_short">重新扫描</string>
+    <string name="settings_output_auto_short">自动/常规</string>
     <string name="settings_remove_folder">移除</string>
     <string name="settings_scan_collecting">正在扫描文件夹…</string>
     <string name="settings_scan_progress">扫描中：发现 %1$d 首，已解析 %2$d，失败 %3$d</string>
@@ -83,4 +82,6 @@
     <string name="settings_background_hint">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_battery_optimization">电池优化</string>
     <string name="settings_app_details_autostart">应用详情 / 自启动</string>
+    <string name="settings_app_details_short">应用详情</string>
+    <string name="settings_autostart_short">自启动</string>
 </resources>

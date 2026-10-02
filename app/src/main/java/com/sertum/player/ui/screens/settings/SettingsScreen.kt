@@ -15,10 +15,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,6 +44,9 @@ import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.sertumBuildLabel
+import com.sertum.player.ui.components.SettingsTile
+import com.sertum.player.ui.components.SettingsTileGrid
+import com.sertum.player.ui.components.TileEmphasis
 import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.settings.LanguageOption
 import com.sertum.player.ui.settings.SettingsStateHolder
@@ -81,38 +92,46 @@ fun SettingsScreen() {
         // Durable in AppPreferences, not SettingsStateHolder: Application.onCreate
         // reads it before any UI exists.
         val scanOnStartup by app.preferences.scanOnStartup.collectAsState()
-        RowSwitch(
-            title = stringResource(R.string.settings_scan_on_startup_title),
-            subtitle = stringResource(
-                if (scanOnStartup) {
-                    R.string.settings_scan_on_startup_on
-                } else {
-                    R.string.settings_scan_on_startup_off
+        SettingsTileGrid {
+            SettingsTile(
+                label = stringResource(R.string.settings_scan_on_startup_short),
+                icon = Icons.Filled.Refresh,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = scanOnStartup,
+                onClick = { app.preferences.setScanOnStartup(!scanOnStartup) },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_full_scan_short),
+                icon = Icons.Filled.FolderOpen,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = state.fullScanEnabled,
+                onClick = {
+                    val enabling = !state.fullScanEnabled
+                    val isManager = android.os.Build.VERSION.SDK_INT >= 30 &&
+                        Environment.isExternalStorageManager()
+                    if (enabling && !isManager) {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                Uri.parse("package:" + context.packageName),
+                            ),
+                        )
+                    }
+                    SettingsStateHolder.update { it.copy(fullScanEnabled = enabling) }
                 },
-            ),
-            checked = scanOnStartup,
-            onCheckedChange = { app.preferences.setScanOnStartup(it) },
-        )
-        RowSwitch(
-            title = stringResource(R.string.settings_full_scan_title),
-            subtitle = stringResource(
-                if (state.fullScanEnabled) R.string.settings_full_scan_on else R.string.settings_full_scan_off,
-            ),
-            checked = state.fullScanEnabled,
-            onCheckedChange = { enable ->
-                val isManager = android.os.Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()
-                if (enable && !isManager) {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:" + context.packageName),
-                    )
-                    context.startActivity(intent)
-                }
-                SettingsStateHolder.update { it.copy(fullScanEnabled = enable) }
-            },
-        )
-        OutlinedButton(onClick = { treeLauncher.launch(null) }, modifier = Modifier.padding(top = 8.dp)) {
-            Text(stringResource(R.string.settings_add_folder))
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_add_folder_short),
+                icon = Icons.Filled.CreateNewFolder,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = { treeLauncher.launch(null) },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_rescan_short),
+                icon = Icons.Filled.Refresh,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = { app.requestLibraryScan() },
+            )
         }
         safDirs.forEach { uri ->
             val name = runCatching { DocumentFile.fromTreeUri(context, uri)?.name }.getOrNull()
@@ -161,51 +180,61 @@ fun SettingsScreen() {
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
-        OutlinedButton(
-            onClick = { app.requestLibraryScan() },
-            modifier = Modifier.padding(top = 8.dp),
-        ) {
-            Text(stringResource(R.string.settings_rescan))
-        }
 
         SectionTitle(stringResource(R.string.settings_output_mode))
-        listOf(
-            OutputMode.STANDARD to R.string.settings_output_auto_standard,
-            OutputMode.USB_EXCLUSIVE to R.string.settings_output_usb_exclusive,
-        ).forEach { (mode, labelRes) ->
-            RadioRow(
-                label = stringResource(labelRes),
-                selected = state.outputMode == mode,
+        SettingsTileGrid {
+            SettingsTile(
+                label = stringResource(R.string.settings_output_auto_short),
+                icon = Icons.Filled.Speaker,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = state.outputMode == OutputMode.STANDARD,
                 onClick = {
-                    SettingsStateHolder.update { it.copy(outputMode = mode) }
-                    app.playbackController.switchOutputMode(mode)
+                    SettingsStateHolder.update { it.copy(outputMode = OutputMode.STANDARD) }
+                    app.playbackController.switchOutputMode(OutputMode.STANDARD)
+                },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_output_usb_exclusive),
+                icon = Icons.Filled.Usb,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = state.outputMode == OutputMode.USB_EXCLUSIVE,
+                onClick = {
+                    SettingsStateHolder.update { it.copy(outputMode = OutputMode.USB_EXCLUSIVE) }
+                    app.playbackController.switchOutputMode(OutputMode.USB_EXCLUSIVE)
                 },
             )
         }
 
         SectionTitle(stringResource(R.string.settings_language))
-        listOf(
-            LanguageOption.SYSTEM to R.string.settings_language_system,
-            LanguageOption.ZH to R.string.settings_language_zh,
-            LanguageOption.EN to R.string.settings_language_en,
-        ).forEach { (option, labelRes) ->
-            RadioRow(
-                label = stringResource(labelRes),
-                selected = state.language == option,
-                onClick = {
-                    SettingsStateHolder.update { it.copy(language = option) }
-                    applyLocale(context, option)
-                },
-            )
+        SettingsTileGrid {
+            listOf(
+                LanguageOption.SYSTEM to R.string.settings_language_system,
+                LanguageOption.ZH to R.string.settings_language_zh,
+                LanguageOption.EN to R.string.settings_language_en,
+            ).forEach { (option, labelRes) ->
+                SettingsTile(
+                    label = stringResource(labelRes),
+                    icon = Icons.Filled.Translate,
+                    emphasis = TileEmphasis.TOGGLE,
+                    selected = state.language == option,
+                    onClick = {
+                        SettingsStateHolder.update { it.copy(language = option) }
+                        applyLocale(context, option)
+                    },
+                )
+            }
         }
 
         SectionTitle(stringResource(R.string.settings_theme))
-        RowSwitch(
-            title = stringResource(R.string.settings_dark_theme),
-            subtitle = stringResource(if (state.darkTheme) R.string.settings_dark_on else R.string.settings_dark_off),
-            checked = state.darkTheme,
-            onCheckedChange = { dark -> SettingsStateHolder.update { it.copy(darkTheme = dark) } },
-        )
+        SettingsTileGrid {
+            SettingsTile(
+                label = stringResource(R.string.settings_dark_theme),
+                icon = Icons.Filled.DarkMode,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = state.darkTheme,
+                onClick = { SettingsStateHolder.update { it.copy(darkTheme = !state.darkTheme) } },
+            )
+        }
 
         SectionTitle(stringResource(R.string.settings_background_playback))
         Text(
@@ -213,26 +242,44 @@ fun SettingsScreen() {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedButton(
-            onClick = {
-                context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-            },
-            modifier = Modifier.padding(top = 8.dp),
-        ) {
-            Text(stringResource(R.string.settings_battery_optimization))
-        }
-        OutlinedButton(
-            onClick = {
-                context.startActivity(
-                    Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:" + context.packageName),
-                    ),
-                )
-            },
-            modifier = Modifier.padding(top = 8.dp),
-        ) {
-            Text(stringResource(R.string.settings_app_details_autostart))
+        SettingsTileGrid(Modifier.padding(top = 10.dp)) {
+            SettingsTile(
+                label = stringResource(R.string.settings_battery_optimization),
+                icon = Icons.Filled.BatterySaver,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_app_details_short),
+                icon = Icons.Filled.Settings,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + context.packageName),
+                        ),
+                    )
+                },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_autostart_short),
+                icon = Icons.Filled.Settings,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = {
+                    // Same destination as app details: HyperOS autostart lives on
+                    // the app's own info page, which is what the old combined
+                    // button opened.
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + context.packageName),
+                        ),
+                    )
+                },
+            )
         }
 
         SectionTitle(stringResource(R.string.settings_about))
@@ -255,11 +302,13 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
-        OutlinedButton(
-            onClick = { exportLauncher.launch("sertum-diagnostics.txt") },
-            modifier = Modifier.padding(top = 8.dp),
-        ) {
-            Text(stringResource(R.string.settings_export_diagnostics))
+        SettingsTileGrid(Modifier.padding(top = 10.dp)) {
+            SettingsTile(
+                label = stringResource(R.string.settings_export_diagnostics),
+                icon = Icons.Filled.FileDownload,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = { exportLauncher.launch("sertum-diagnostics.txt") },
+            )
         }
     }
 }
@@ -289,33 +338,4 @@ private fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
     )
-}
-
-@Composable
-private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = selected, onClick = onClick)
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-@Composable
-private fun RowSwitch(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
 }
