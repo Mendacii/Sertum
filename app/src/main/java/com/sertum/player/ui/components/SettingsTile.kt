@@ -55,23 +55,20 @@ import com.sertum.player.ui.theme.WarmGold
 val SettingsTileHeight: Dp = 44.dp
 val SettingsTileTouchTarget: Dp = 48.dp
 /**
- * Two tiles plus the gap land on the intended 65% edge. Derived from the
- * measured usable row width of 275.9dp: the band is 275.9 - 95 (reserve) =
- * 180.9dp, minus the 8dp gap, halved = 86dp. The measured value is used because
- * the row's real width differs from the screen arithmetic at this depth in the
- * layout, which is what made earlier sizes land short.
+ * Two tiles plus the gap land on the intended 65% edge.
+ *
+ * Calibrated from the on-device row measurement rather than from screen
+ * arithmetic: the row reports about 180.9dp of usable width here, so
+ * (180.9 - 8) / 2 = 86dp per tile. Earlier revisions derived this from the
+ * screen width and always landed short, partly because they assumed a 420dpi
+ * screen when the reference device is 440dpi (2.75px per dp).
  */
 val SettingsTileWidth: Dp = 86.dp
 
 /**
- * The grid occupies only the left [SETTINGS_GRID_WIDTH_FRACTION] of the page, so
- * the free space stays on the right as deliberate margin rather than stretching
- * the tiles edge to edge.
- *
- * 0.65 of the 380dp content width leaves ~247dp, which fits two
- * [SettingsTileWidth] tiles plus the gap. The first attempt used 118dp tiles in
- * the same band, and that missed by about 2dp after pixel rounding, so every
- * tile ended up alone on its own row - hence 112dp.
+ * Space reserved to the right of the grid, i.e. the share of the row the tiles
+ * must not reach into. GridRightReserve in [SettingsTileGrid] is what actually
+ * enforces the band.
  */
 const val SETTINGS_GRID_WIDTH_FRACTION: Float = 0.65f
 private val TileCorner = 10.dp
