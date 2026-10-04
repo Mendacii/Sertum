@@ -200,10 +200,23 @@ fun SertumApp(
                         bottom = reservedBottomInset,
                     ),
                 ),
-                enterTransition = { fadeIn(tween(120)) },
+                // A fade in both directions, and no slide.
+                //
+                // Predictive back was enabled here for one build (the manifest flag is now
+                // removed, deliberately). It made the platform slide the page away with the
+                // finger and slide it back if the gesture was released without completing,
+                // which reads as the page vanishing mid-swipe rather than as a screen
+                // transition. The request was for the return to feel smooth, not for a
+                // live preview, so the back gesture resolves into a transition on release
+                // and nothing moves while the finger is down.
+                //
+                // The durations are shorter on the way in because the incoming page is
+                // ready, and longer on the way back because the list underneath is being
+                // rebuilt at that moment.
+                enterTransition = { fadeIn(tween(140)) },
                 exitTransition = { fadeOut(tween(90)) },
-                popEnterTransition = { fadeIn(tween(120)) },
-                popExitTransition = { fadeOut(tween(90)) },
+                popEnterTransition = { fadeIn(tween(180)) },
+                popExitTransition = { fadeOut(tween(180)) },
             ) {
                 composable(SertumDestinations.MAIN) {
                     MainTabs(
