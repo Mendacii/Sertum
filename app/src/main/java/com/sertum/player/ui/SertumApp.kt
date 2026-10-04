@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui
+package com.sertum.player.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -87,7 +87,8 @@ fun SertumApp(
     initialInfoSection: String? = null,
     /** Launch-only theme override for device evidence. Null keeps the stored setting. */
     initialDarkTheme: Boolean? = null,
-
+    /** Launch-only: opens one album's detail page. Null on normal launches. */
+    initialAlbumKey: String? = null,
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
@@ -110,6 +111,18 @@ fun SertumApp(
     }
 
     val layoutDirection = LocalLayoutDirection.current
+
+    // Album deep link for device evidence: the album page is reached by tapping a cover,
+    // and taps cannot be injected on the reference device. Runs once, and only on a
+    // genuine first launch, so it cannot drag the pager back after a recreation.
+    val albumOpened = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(initialAlbumKey) {
+        val key = initialAlbumKey
+        if (key != null && !albumOpened.value) {
+            albumOpened.value = true
+            navController.navigate(SertumDestinations.albumDetail(key))
+        }
+    }
 
     // initialDarkTheme is a launch-only override used for device evidence: the theme
     // lives in in-memory state, so without it the light theme could only be inspected

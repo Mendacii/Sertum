@@ -1,4 +1,4 @@
-﻿package com.sertum.player
+package com.sertum.player
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -34,6 +34,15 @@ class MainActivity : ComponentActivity() {
          * never be checked without a human tapping. Unknown values open nothing.
          */
         const val EXTRA_INFO_SECTION = "info"
+
+        /**
+         * Opens one album's detail page on launch, by album key.
+         *
+         * The album page is reached by tapping a cover, and taps cannot be injected on the
+         * reference device, so without this the page's layout could not be inspected or
+         * checked at all. Ignored on activity recreation like the other launch extras.
+         */
+        const val EXTRA_ALBUM = "album"
 
         /**
          * Forces a theme for the launch, e.g. `--es theme light`, so the light scheme
@@ -96,6 +105,11 @@ class MainActivity : ComponentActivity() {
             SertumTheme {
                 SertumApp(
                     initialTab = requestedTab,
+                    initialAlbumKey = if (savedInstanceState != null) {
+                        null
+                    } else {
+                        intent?.getStringExtra(EXTRA_ALBUM)
+                    },
                     initialInfoSection = if (savedInstanceState != null) {
                         null
                     } else {
