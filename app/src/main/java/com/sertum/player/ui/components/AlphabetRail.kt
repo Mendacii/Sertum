@@ -31,6 +31,61 @@ import com.sertum.player.ui.theme.WarmGoldDim
 
 val ALPHABET_RAIL_LETTERS: List<Char> = ('A'..'Z').toList() + '#'
 
+/** The rail bucket a title belongs to: its first letter, or '#' for anything else. */
+fun firstLetterOf(title: String): Char {
+    val first = title.trim().firstOrNull() ?: return '#'
+    return if (first.isLetter() && first.uppercaseChar() in 'A'..'Z') first.uppercaseChar() else '#'
+}
+
+/**
+ * True when a title starts with a letter outside A-Z - Chinese, Japanese, Cyrillic and the
+ * like.
+ *
+ * Distinct from `firstLetterOf(title) == '#'`, which is also true for titles starting with
+ * a digit or punctuation. Those sort before 'A', and they are what an earlier version of
+ * the '#' jump landed on by mistake.
+ *
+ * A non-letter returns false. Writing this as `!(first.isLetter() && ...)` inverts exactly
+ * that case and classifies "2V-ALK" and "'Sick" as non-Latin, which is wrong and was caught
+ * by the test below.
+ */
+fun startsWithNonLatin(title: String): Boolean {
+    val first = title.trim().firstOrNull() ?: return false
+    if (!first.isLetter()) return false
+    return first.uppercaseChar() !in 'A'..'Z'
+}
+
+/**
+ * Index of the list entry the rail should jump to for [letter], or null when the list has
+ * nothing under it.
+ *
+ * '#' means the special-character and non-Latin run, which is not where '#' sorts. Titles
+ * starting with punctuation or a digit sort before 'A' ("'Sick", "12"), while non-Latin
+ * titles - Chinese, Japanese, Cyrillic - sort after 'Z' because their code points are
+ * higher. A plain first-match lookup therefore sends '#' to the head of the list, which is
+ * where the rail already is, and the non-Latin run at the end becomes unreachable without
+ * dragging through every letter in between.
+ *
+ * '#' resolves to the FIRST non-Latin entry, not to the last entry in the list. Those are
+ * different places: the non-Latin run is a range, and the rail belongs at the start of it,
+ * the same way 'E' goes to the first E. Landing on the final entry would drop the reader
+ * past every non-Latin item into the middle of the run.
+ *
+ * The first entry is found by taking the first '#' bucket that follows a letter bucket, so
+ * that punctuation and digits - which are also '#' - are not mistaken for the run.
+ *
+ * [buckets] is the bucket letter of each entry, in display order.
+ */
+fun railIndexFor(letter: Char, buckets: List<Char>): Int? {
+    if (buckets.isEmpty()) return null
+    if (letter != '#') return buckets.indexOf(letter).takeIf { it >= 0 }
+    val afterLetters = buckets.withIndex().firstOrNull { (i, bucket) ->
+        bucket == '#' && buckets.take(i).any { it in 'A'..'Z' }
+    }
+    return (afterLetters ?: buckets.withIndex().firstOrNull { (_, bucket) -> bucket == '#' })
+        ?.index
+}
+
 /**
  * Vertical A-Z rail for LazyColumn/LazyVerticalGrid pages. Press or drag
  * along the rail to jump to the first item of that letter (the host screen

@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +37,8 @@ import com.sertum.player.SertumApplication
 import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.ui.components.ALPHABET_RAIL_LETTERS
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.firstLetterOf
+import com.sertum.player.ui.components.railIndexFor
 import com.sertum.player.ui.theme.SurfaceBlack
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -43,9 +46,31 @@ import kotlinx.coroutines.launch
 @Composable
 fun AlbumsScreen(onAlbumClick: (String) -> Unit = {}) {
     val dao = (LocalContext.current.applicationContext as SertumApplication).database.libraryDao()
-    val albums by dao.observeAlbums().collectAsState(initial = null as List<AlbumEntity>?)
-    var query by remember { mutableStateOf("") }
-    var selectedLetter by remember { mutableStateOf<Char?>(null) }
+    val loaded by dao.observeAlbums().collectAsState(initial = null as List<AlbumEntity>?)
+    // Renders from the last known albums instead of a blank frame.
+    //
+    // The detail page is a separate destination, so leaving this screen disposes it and
+    // the collector restarts from null on the way back. That null used to render a blank
+    // frame which then filled in while the return transition was already running, and
+    // because it lands under a fade the whole return read as a stutter rather than as a
+    // transition. With a cached list the grid is on screen from the first frame and only
+    // its contents refresh.
+    //
+    // Plain remember, not rememberSaveable. Returning here is always the same process, so
+    // the cache only has to outlive the navigation, and AlbumEntity is a Room class with
+    // no Parcelable or Serializable implementation - putting entities in the saved state
+    // would throw at runtime, on a path the compiler cannot check. Nothing here is worth
+    // that risk.
+    val previousAlbums = remember { mutableStateOf<List<AlbumEntity>?>(null) }
+    if (loaded != null) previousAlbums.value = loaded
+    val albums = loaded ?: previousAlbums.value
+    // rememberSaveable, not remember: the detail page is a separate destination, so
+    // leaving this screen disposes it and plain remembers would drop the reader back at
+    // the top of a 244-album grid on every return. The scroll position already survives
+    // because rememberLazyGridState is itself saveable; the search text and the chosen
+    // letter did not, and now do.
+    var query by rememberSaveable { mutableStateOf("") }
+    var selectedLetter by rememberSaveable { mutableStateOf<Char?>(null) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val visible = if (query.isBlank()) {
@@ -86,8 +111,8 @@ fun AlbumsScreen(onAlbumClick: (String) -> Unit = {}) {
             EmptyLibrary(stringResource(R.string.nav_albums))
         } else {
             val letterIndexes = ALPHABET_RAIL_LETTERS.associateWith { letter ->
-                visible.indexOfFirst { firstLetterOf(it.title) == letter }
-            }.filterValues { it >= 0 }
+                railIndexFor(letter, visible.map { firstLetterOf(it.title) })
+            }.filterValues { it != null }
             Box(Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(4),

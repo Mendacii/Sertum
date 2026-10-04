@@ -33,6 +33,8 @@ import com.sertum.player.audio.PlayableTrack
 import com.sertum.player.data.db.TrackEntity
 import com.sertum.player.ui.components.ALPHABET_RAIL_LETTERS
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.firstLetterOf
+import com.sertum.player.ui.components.railIndexFor
 import com.sertum.player.ui.theme.WarmGold
 import kotlinx.coroutines.launch
 
@@ -83,8 +85,8 @@ fun SongsScreen() {
         } else {
             val controller = (LocalContext.current.applicationContext as SertumApplication).playbackController
             val letterIndexes = ALPHABET_RAIL_LETTERS.associateWith { letter ->
-                visible.indexOfFirst { firstLetterOf(it.title) == letter }
-            }.filterValues { it >= 0 }
+                railIndexFor(letter, visible.map { firstLetterOf(it.title) })
+            }.filterValues { it != null }
             Box(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = listState,
@@ -127,11 +129,6 @@ fun TrackEntity.toPlayable(): PlayableTrack = PlayableTrack(
     album = albumTitle,
     albumKey = albumKey,
 )
-
-fun firstLetterOf(title: String): Char {
-    val first = title.trim().firstOrNull() ?: return '#'
-    return if (first.isLetter() && first.uppercaseChar() in 'A'..'Z') first.uppercaseChar() else '#'
-}
 
 @Composable
 fun TrackRow(track: TrackEntity, onClick: () -> Unit = {}) {

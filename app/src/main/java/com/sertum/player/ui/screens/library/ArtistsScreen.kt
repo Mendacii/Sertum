@@ -1,4 +1,4 @@
-package com.sertum.player.ui.screens.library
+﻿package com.sertum.player.ui.screens.library
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -32,6 +32,7 @@ import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.data.db.ArtistEntity
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.startsWithNonLatin
 import com.sertum.player.ui.theme.WarmGold
 import kotlinx.coroutines.launch
 
@@ -80,9 +81,16 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
         } else {
             val grouped = visible.groupBy { it.sortKey.firstOrNull()?.uppercase() ?: "#" }.toSortedMap()
             val headerIndexes = mutableMapOf<Char, Int>()
+            // Where the non-Latin run begins, for the rail's '#'. Computed from the
+            // generated sort key rather than the display name so it matches how these
+            // groups were built.
+            var nonLatinStartIndex: Int? = null
             var runningIndex = 0
             grouped.forEach { (letter, list) ->
                 headerIndexes[letter.firstOrNull() ?: '#'] = runningIndex
+                if (nonLatinStartIndex == null && list.any { startsWithNonLatin(it.sortKey) }) {
+                    nonLatinStartIndex = runningIndex
+                }
                 runningIndex += 1 + list.size
             }
             Box(Modifier.fillMaxSize()) {
@@ -131,7 +139,10 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
                     selected = selectedLetter,
                     onSelect = { letter ->
                         selectedLetter = letter
-                        val index = headerIndexes[letter]
+                        // '#' goes to the start of the non-Latin run, matching the songs
+                        // and albums pages. Not to the last group: the run is a range, and
+                        // the reader belongs at its beginning. See railIndexFor.
+                        val index = if (letter == '#') nonLatinStartIndex else headerIndexes[letter]
                         if (index != null) {
                             scope.launch { listState.animateScrollToItem(index) }
                         }
