@@ -54,7 +54,7 @@
     <!-- 设置 -->
     <string name="settings_scanning">扫描</string>
     <!-- 设置网格用的短标签；上面那组长标题只在确实需要成句的地方保留 -->
-    <string name="settings_scan_on_startup_short">启动扫描</string>
+    <string name="settings_scan_on_startup_short">启动时扫描</string>
     <string name="settings_full_scan_short">全盘扫描</string>
     <string name="settings_add_folder_short">添加文件夹</string>
     <string name="settings_rescan_short">重新扫描</string>
@@ -80,7 +80,7 @@
     <string name="settings_battery_optimization">电池优化</string>
     <string name="settings_app_details_autostart">应用详情</string>
     <!-- 分节说明弹窗：每个标题右边 (i) 里的逐项解释 -->
-    <string name="settings_info_scan_on_startup">启动扫描</string>
+    <string name="settings_info_scan_on_startup">启动时扫描</string>
     <string name="settings_info_scan_on_startup_desc">每次启动 App 都重新扫描曲库。关掉后只在手动扫描或添加目录后扫描。</string>
     <string name="settings_info_full_scan">全盘扫描</string>
     <string name="settings_info_full_scan_desc">扫描整个设备的音频文件，包括不在音乐文件夹里的。需要授予「所有文件访问」权限。默认关闭。</string>

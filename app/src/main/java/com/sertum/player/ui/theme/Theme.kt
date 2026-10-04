@@ -54,6 +54,27 @@ private val LightScheme = lightColorScheme(
     outline = Color(0xFFD8D0C2),
 )
 
+/**
+ * Tokens that follow the active theme, for call sites that need a specific role the
+ * colour scheme does not name directly.
+ *
+ * These exist because component code was importing the raw colour constants
+ * (`TextPrimary`, `TextSecondary`) instead of reading the scheme. Those constants are
+ * light-on-dark values only, so the settings page kept near-white text on the light
+ * theme's paper background and became unreadable. The constants are names, not roles:
+ * `TextPrimary` does not mean "the main text colour", it means "#F2F2F2", which is only
+ * correct in one theme.
+ *
+ * Gold is deliberately absent. It is an accent rather than a surface-dependent colour,
+ * it reads correctly on both backgrounds, and every existing call site already reaches
+ * for it directly.
+ */
+val sertumBodyText: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurface
+
+val sertumMutedText: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
 @Composable
 fun SertumTheme(
     darkTheme: Boolean = true,

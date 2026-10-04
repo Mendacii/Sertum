@@ -56,7 +56,7 @@
     <string name="settings_scanning">Scanning</string>
     <!-- Short tile labels for the settings grid; the long titles above stay
          where a sentence is genuinely needed. -->
-    <string name="settings_scan_on_startup_short">Scan</string>
+    <string name="settings_scan_on_startup_short">Scan at start</string>
     <string name="settings_full_scan_short">Full scan</string>
     <string name="settings_add_folder_short">Add folder</string>
     <string name="settings_rescan_short">Rescan</string>
@@ -82,7 +82,7 @@
     <string name="settings_battery_optimization">Battery optimization</string>
     <string name="settings_app_details_autostart">App details</string>
     <!-- Section info dialogs: the per-option explanations behind each title's (i) -->
-    <string name="settings_info_scan_on_startup">Scan on startup</string>
+    <string name="settings_info_scan_on_startup">Scan at start</string>
     <string name="settings_info_scan_on_startup_desc">Rescans the library every time the app starts. When off, scanning happens only on a manual rescan or after adding a folder.</string>
     <string name="settings_info_full_scan">Full scan</string>
     <string name="settings_info_full_scan_desc">Scans audio files across the whole device, including ones outside your music folders. Needs the All files access permission. Off by default.</string>
