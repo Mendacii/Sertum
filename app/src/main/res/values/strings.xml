@@ -81,4 +81,30 @@
     <string name="settings_background_hint">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_battery_optimization">Battery optimization</string>
     <string name="settings_app_details_autostart">App details</string>
+    <!-- Section info dialogs: the per-option explanations behind each title's (i) -->
+    <string name="settings_info_scan_on_startup">Scan on startup</string>
+    <string name="settings_info_scan_on_startup_desc">Rescans the library every time the app starts. When off, scanning happens only on a manual rescan or after adding a folder.</string>
+    <string name="settings_info_full_scan">Full scan</string>
+    <string name="settings_info_full_scan_desc">Scans audio files across the whole device, including ones outside your music folders. Needs the All files access permission. Off by default.</string>
+    <string name="settings_info_add_folder">Add folder</string>
+    <string name="settings_info_add_folder_desc">Pick a music folder and grant lasting read access. Added folders are listed below and can be removed one by one.</string>
+    <string name="settings_info_rescan">Rescan</string>
+    <string name="settings_info_rescan_desc">Rescans the added folders right away, for after audio files were added or removed outside the app.</string>
+    <string name="settings_info_output_auto">Standard</string>
+    <string name="settings_info_output_auto_desc">Uses the system audio path. Routes to a USB DAC automatically when one is present, with volume controlled by the system.</string>
+    <string name="settings_info_output_usb">USB exclusive</string>
+    <string name="settings_info_output_usb_desc">Bypasses the system mixer and sends the file at its original sample rate to the USB DAC for bit-perfect output. Requires a DAC that supports exclusive mode, with media volume at 100%.</string>
+    <string name="settings_info_language_system">Follow system</string>
+    <string name="settings_info_language_system_desc">Uses the phone language, so the interface follows when the system is switched to Chinese.</string>
+    <string name="settings_info_language_zh">Chinese</string>
+    <string name="settings_info_language_zh_desc">Forces the interface to Simplified Chinese regardless of the system language.</string>
+    <string name="settings_info_language_en">English</string>
+    <string name="settings_info_language_en_desc">Forces the interface to English regardless of the system language.</string>
+    <string name="settings_info_dark_theme">Dark theme</string>
+    <string name="settings_info_dark_theme_desc">Pure black surfaces with warm gold highlights, suited to OLED screens and dark rooms. Turning it off switches to the light theme.</string>
+    <string name="settings_info_battery">Battery optimization</string>
+    <string name="settings_info_battery_desc">Opens the system battery optimization allow-list so playback is not interrupted once the screen is off.</string>
+    <string name="settings_info_app_details">App details</string>
+    <string name="settings_info_app_details_desc">Opens the Sertum app info page. On HyperOS and MIUI the autostart switch lives on that page too.</string>
+    <string name="settings_info_close">Close</string>
 </resources>

@@ -79,4 +79,30 @@
     <string name="settings_background_hint">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_battery_optimization">电池优化</string>
     <string name="settings_app_details_autostart">应用详情</string>
+    <!-- 分节说明弹窗：每个标题右边 (i) 里的逐项解释 -->
+    <string name="settings_info_scan_on_startup">启动扫描</string>
+    <string name="settings_info_scan_on_startup_desc">每次启动 App 都重新扫描曲库。关掉后只在手动扫描或添加目录后扫描。</string>
+    <string name="settings_info_full_scan">全盘扫描</string>
+    <string name="settings_info_full_scan_desc">扫描整个设备的音频文件，包括不在音乐文件夹里的。需要授予「所有文件访问」权限。默认关闭。</string>
+    <string name="settings_info_add_folder">添加文件夹</string>
+    <string name="settings_info_add_folder_desc">选择一个音乐文件夹，授予长期读取权限。已添加的目录会列在下方，可以逐个移除。</string>
+    <string name="settings_info_rescan">重新扫描</string>
+    <string name="settings_info_rescan_desc">立刻重新扫描已添加的文件夹。用于在外部新增或删除了音频文件之后。</string>
+    <string name="settings_info_output_auto">自动/常规</string>
+    <string name="settings_info_output_auto_desc">走系统音频通路。接 USB DAC 时自动路由到它，音量由系统控制。</string>
+    <string name="settings_info_output_usb">USB 独占</string>
+    <string name="settings_info_output_usb_desc">绕过系统混音，直接以文件原始采样率输出到 USB DAC，追求 bit-perfect。需要 DAC 支持独占模式，且媒体音量拉到 100%。</string>
+    <string name="settings_info_language_system">跟随系统</string>
+    <string name="settings_info_language_system_desc">使用手机系统的语言设置，系统切成中文时界面也跟着变中文。</string>
+    <string name="settings_info_language_zh">中文</string>
+    <string name="settings_info_language_zh_desc">强制界面显示简体中文，不受系统语言影响。</string>
+    <string name="settings_info_language_en">English</string>
+    <string name="settings_info_language_en_desc">强制界面显示英文，不受系统语言影响。</string>
+    <string name="settings_info_dark_theme">深色主题</string>
+    <string name="settings_info_dark_theme_desc">纯黑背景搭配暖金色高亮，适合 OLED 屏幕和暗光环境。关闭后使用浅色主题。</string>
+    <string name="settings_info_battery">电池优化</string>
+    <string name="settings_info_battery_desc">打开系统的电池优化白名单，避免锁屏后播放被系统中断。</string>
+    <string name="settings_info_app_details">应用详情</string>
+    <string name="settings_info_app_details_desc">打开 Sertum 的应用信息页。HyperOS/MIUI 上自启动开关也在这个页面里。</string>
+    <string name="settings_info_close">关闭</string>
 </resources>

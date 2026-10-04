@@ -1,4 +1,4 @@
-package com.sertum.player.ui.screens.settings
+﻿package com.sertum.player.ui.screens.settings
 
 import android.content.Context
 import android.content.Intent
@@ -45,6 +45,9 @@ import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.SERTUM_VERSION
 import com.sertum.player.sertumBuildFingerprint
+import com.sertum.player.ui.components.OptionInfo
+import com.sertum.player.ui.components.SectionHeader
+import com.sertum.player.ui.components.SectionInfo
 import com.sertum.player.ui.components.SettingsTile
 import com.sertum.player.ui.components.SettingsTileGrid
 import com.sertum.player.ui.components.TileEmphasis
@@ -54,7 +57,7 @@ import com.sertum.player.ui.settings.SettingsStateHolder
 import java.util.Locale
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(initialInfoSection: String? = null) {
     val state by SettingsStateHolder.state.collectAsState()
     val context = LocalContext.current
     val app = context.applicationContext as SertumApplication
@@ -92,7 +95,7 @@ fun SettingsScreen() {
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        SectionTitle(stringResource(R.string.settings_scanning))
+        SectionTitle(stringResource(R.string.settings_scanning), SectionInfo.scanning, initiallyOpen = initialInfoSection == "scan")
         // Durable in AppPreferences, not SettingsStateHolder: Application.onCreate
         // reads it before any UI exists.
         val scanOnStartup by app.preferences.scanOnStartup.collectAsState()
@@ -185,7 +188,7 @@ fun SettingsScreen() {
             )
         }
 
-        SectionTitle(stringResource(R.string.settings_output_mode))
+        SectionTitle(stringResource(R.string.settings_output_mode), SectionInfo.outputMode, initiallyOpen = initialInfoSection == "output")
         SettingsTileGrid {
             SettingsTile(
                 label = stringResource(R.string.settings_output_auto_short),
@@ -209,7 +212,7 @@ fun SettingsScreen() {
             )
         }
 
-        SectionTitle(stringResource(R.string.settings_language))
+        SectionTitle(stringResource(R.string.settings_language), SectionInfo.language, initiallyOpen = initialInfoSection == "language")
         SettingsTileGrid {
             listOf(
                 LanguageOption.SYSTEM to R.string.settings_language_system,
@@ -229,7 +232,7 @@ fun SettingsScreen() {
             }
         }
 
-        SectionTitle(stringResource(R.string.settings_theme))
+        SectionTitle(stringResource(R.string.settings_theme), SectionInfo.theme, initiallyOpen = initialInfoSection == "theme")
         SettingsTileGrid {
             SettingsTile(
                 label = stringResource(R.string.settings_dark_theme),
@@ -240,7 +243,7 @@ fun SettingsScreen() {
             )
         }
 
-        SectionTitle(stringResource(R.string.settings_background_playback))
+        SectionTitle(stringResource(R.string.settings_background_playback), SectionInfo.background, initiallyOpen = initialInfoSection == "background")
         Text(
             text = stringResource(R.string.settings_background_hint),
             style = MaterialTheme.typography.bodyMedium,
@@ -327,11 +330,20 @@ private val ResourcesCompatSystemLocale: Locale
     get() = android.content.res.Resources.getSystem().configuration.locales.get(0) ?: Locale.getDefault()
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
-    )
+private fun SectionTitle(
+    text: String,
+    options: List<OptionInfo> = emptyList(),
+    initiallyOpen: Boolean = false,
+) {
+    // The section heading and, where there is anything worth explaining, the (i)
+    // button that opens those explanations. Kept as a wrapper so the screen reads the
+    // same at every call site.
+    Column(Modifier.padding(top = 24.dp, bottom = 8.dp)) {
+        SectionHeader(
+            title = text,
+            infoTitle = text,
+            options = options,
+            initiallyOpen = initiallyOpen,
+        )
+    }
 }
