@@ -55,10 +55,19 @@ class CoverRotationTest {
     }
 
     @Test
-    fun `the turn duration is the requested 15 rpm`() {
-        // 15 rpm is one turn every 4 seconds.
-        assertThat(COVER_ROTATION_MS).isEqualTo(4_000)
-        assertThat(60_000f / COVER_ROTATION_MS).isEqualTo(15f)
+    fun `the turn duration is the chosen 3 rpm`() {
+        // rpm is turns per minute, so a turn takes 60,000 / rpm:
+        //   60,000 / 3 = 20,000ms
+        //
+        // The division is asserted, not just the constant. The number was never what went
+        // wrong here - 12,000ms was called 30 rpm, and that figure justified 4,000ms (three
+        // times faster, described as slower) and later 24,000ms (right value, wrong reason).
+        // Asserting the division forces the intended speed to be stated.
+        assertThat(COVER_ROTATION_MS).isEqualTo(20_000)
+        assertThat(60_000f / COVER_ROTATION_MS).isEqualTo(3f)
+
+        // The figure that was wrong at the start: 30 rpm would have been 2,000ms.
+        assertThat(60_000f / 30f).isEqualTo(2_000f)
     }
 
     /**

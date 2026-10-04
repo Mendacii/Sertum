@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.screens.nowplaying
+package com.sertum.player.ui.screens.nowplaying
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -291,10 +291,17 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
 /**
  * One full turn of the round cover, in milliseconds.
  *
- * 4,000ms is 15 rpm, chosen by the user. For reference a 12-inch record plays at 33 1/3 rpm,
- * so this is a little under half that.
+ * rpm is turns per minute, so a turn takes 60,000 / rpm: 60,000 / 3 = 20,000ms.
+ *
+ * Settled by choosing a speed and deriving the duration from it, rather than by adjusting
+ * the previous duration. The earlier attempts went the other way and got the direction
+ * wrong: the original 12,000ms was mis-described as 30 rpm, which justified shortening it to
+ * 4,000ms (15 rpm) as a change meant to slow the cover down.
+ *
+ * CoverRotationTest asserts the division, so any future change has to state the speed it
+ * means.
  */
-internal const val COVER_ROTATION_MS = 4_000
+internal const val COVER_ROTATION_MS = 20_000
 
 /**
  * The angle the cover should animate to next, given where it is now.
