@@ -1,7 +1,5 @@
 package com.sertum.player.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,120 +7,101 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sertum.player.ui.theme.HairlineDark
-import com.sertum.player.ui.theme.PureBlack
-import com.sertum.player.ui.theme.SurfaceBlack
-import com.sertum.player.ui.theme.SurfaceRaised
 import com.sertum.player.ui.theme.TextPrimary
 import com.sertum.player.ui.theme.TextSecondary
 import com.sertum.player.ui.theme.WarmGold
 
 /**
- * Settings tile language (user-preference rounds 2026-10-02).
+ * Settings option: icon plus label, with no box.
  *
- * The settings page used to be full-width rows and Material switches. It is now
- * a grid of small uniform tiles:
+ * This replaces the bordered tile grid. The direction came from the user - drop the
+ * frames entirely, keep the icon left of the label, up to three per row, 40px apart,
+ * with the type sizes unchanged.
  *
- * - **selected** is carried by a gold border alone - no switch, no check mark.
- * - **not selected** keeps a grey surface and hairline border, and the label
- *   always stays at full brightness. The grey never touches the type.
- * - every tile is the same width, so the grid stays aligned even though the
- *   labels differ in length.
+ * With no border or fill left, selection is carried by colour: the selected option's
+ * icon and label turn gold. That is the only affordance remaining in a borderless
+ * list, and it extends the existing rule that gold marks the active choice rather
+ * than decorating everything.
  *
- * The visible box is 28dp, which is below the 48dp accessibility touch minimum,
- * so each tile is wrapped in a fixed-height touch target. The visual stays
- * small and the tap area meets the guideline.
+ * Renaming is deliberately deferred: the call sites still say "tile", and the widget
+ * is no longer a tile. The names will be settled once this look is confirmed, so a
+ * rejected direction does not leave churn behind.
+ *
+ * ## Units
+ *
+ * Geometry is in **physical pixels on the 1080x2400 reference screen**, converted by
+ * [px]. An earlier revision treated these numbers as dp, which multiplied everything
+ * by the density factor (440/160 = 2.75).
  */
-val SettingsTileHeight: Dp = 44.dp
-val SettingsTileTouchTarget: Dp = 48.dp
-/**
- * Two tiles plus the gap land on the intended 65% edge.
- *
- * Calibrated from the on-device row measurement rather than from screen
- * arithmetic: the row reports about 180.9dp of usable width here, so
- * (180.9 - 8) / 2 = 86dp per tile. Earlier revisions derived this from the
- * screen width and always landed short, partly because they assumed a 420dpi
- * screen when the reference device is 440dpi (2.75px per dp).
- */
-val SettingsTileWidth: Dp = 86.dp
+private const val SCREEN_DPI = 440f
+
+/** Converts a physical-pixel measurement on the reference screen into dp. */
+private fun px(value: Int): Dp = (value * 160f / SCREEN_DPI).dp
+
+/** Gap between options, both along a row and between rows. */
+private val OptionGap: Dp = px(40)
 
 /**
- * Space reserved to the right of the grid, i.e. the share of the row the tiles
- * must not reach into. GridRightReserve in [SettingsTileGrid] is what actually
- * enforces the band.
+ * Row height for the tap target. The text is only about 40px tall, so the row is
+ * given a fixed height rather than hugging its content, to keep rows from looking
+ * cramped now that no surrounding box supplies vertical padding.
  */
-const val SETTINGS_GRID_WIDTH_FRACTION: Float = 0.65f
-private val TileCorner = 10.dp
-private val TileBorder = 1.dp
+private val OptionHeight: Dp = px(120)
+
+private val IconSize: Dp = px(38)
+private val IconLabelGap: Dp = px(12)
+
+/**
+ * Unchanged from the tile revision, as requested: the label keeps its own explicit
+ * size rather than a theme token, because no token matches it.
+ */
+private const val LABEL_SP = 15f
 
 enum class TileEmphasis {
     /** Tap runs an action; no selected state. */
     NAVIGABLE,
 
-    /** Selected state shown by the gold border. */
+    /** Selected state shown by colour. */
     TOGGLE,
 }
 
 /**
- * [SettingsTileGrid] wraps tiles onto as many lines as needed while keeping one
- * uniform width, which is what makes the grid read as a grid.
+ * Lays options out left to right, wrapping to a new row after [maxPerRow] options or
+ * when the next one would not fit. Each option is as wide as its own content, so rows
+ * pack tightly instead of aligning to a grid.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsTileGrid(
     modifier: Modifier = Modifier,
+    maxPerRow: Int = 3,
     content: @Composable () -> Unit,
 ) {
     FlowRow(
-        // Expressed as "fill the width, then reserve the remainder on the right"
-        // rather than `fillMaxWidth(0.65f)`. The fraction form measured
-        // inconsistently across builds, while the padding form is deterministic:
-        // the row ends exactly (1 - fraction) of the page short of the right
-        // edge, which is the same geometry with predictable behaviour.
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(end = GridRightReserve),
-        horizontalArrangement = Arrangement.spacedBy(TileGap),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(OptionGap),
+        verticalArrangement = Arrangement.spacedBy(OptionGap),
         itemVerticalAlignment = Alignment.CenterVertically,
-        maxItemsInEachRow = 3,
+        maxItemsInEachRow = maxPerRow,
     ) {
         content()
     }
 }
-
-/**
- * Space kept free on the right of the grid, i.e. the ~35% of the page the tiles
- * must not reach into.
- *
- * Calibrated from on-device measurement rather than arithmetic: the row reports
- * 275.9dp of usable width at this point in the hierarchy (measured right edge
- * 138.9dp + this reserve), not the 360.7dp a naive "screen minus 2 x 16dp"
- * calculation gives. Sizing against the measured value is what makes the two
- * tiles actually meet the intended 65% edge.
- */
-private val GridRightReserve = 95.dp
-
-private val TileGap = 8.dp
 
 @Composable
 fun SettingsTile(
@@ -134,41 +113,26 @@ fun SettingsTile(
     modifier: Modifier = Modifier,
 ) {
     val isOn = emphasis == TileEmphasis.TOGGLE && selected
+    // No container at all: just the icon and the label, with colour carrying state.
     Box(
         modifier
-            .width(SettingsTileWidth)
-            .height(SettingsTileTouchTarget)
+            .height(OptionHeight)
+            .clipToBounds()
             .clickable(onClick = onClick),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Row(
-            Modifier
-                .height(SettingsTileHeight)
-                .clip(RoundedCornerShape(TileCorner))
-                .background(if (emphasis == TileEmphasis.NAVIGABLE) SurfaceRaised else SurfaceBlack)
-                .border(
-                    width = TileBorder,
-                    color = if (isOn) WarmGold else HairlineDark,
-                    shape = RoundedCornerShape(TileCorner),
-                )
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (isOn) WarmGold else TextSecondary,
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(IconSize),
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(IconLabelGap))
             Text(
                 text = label,
-                // Fixed size rather than a theme style: labelLarge is 13sp, at
-                // which even a four-character label overflows. 10sp keeps the
-                // longest label ("应用详情 / 自启动") inside the 112dp tile, which
-                // is what lets the full labels stay instead of being shortened.
-                fontSize = 10.sp,
-                color = TextPrimary,
+                fontSize = LABEL_SP.sp,
+                color = if (isOn) WarmGold else TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
