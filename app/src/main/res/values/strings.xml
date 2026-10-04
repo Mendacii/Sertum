@@ -101,7 +101,10 @@
     <string name="settings_info_language_en">English</string>
     <string name="settings_info_language_en_desc">Forces the interface to English regardless of the system language.</string>
     <string name="settings_info_dark_theme">Dark theme</string>
-    <string name="settings_info_dark_theme_desc">Pure black surfaces with warm gold highlights, suited to OLED screens and dark rooms. Turning it off switches to the light theme.</string>
+    <string name="settings_info_dark_theme_desc">Pure black surfaces with warm gold highlights, suited to OLED screens and dark rooms. The default.</string>
+    <string name="settings_info_light_theme">Light theme</string>
+    <string name="settings_info_light_theme_desc">Warm paper background with dark text, for bright rooms and daylight.</string>
+    <string name="settings_light_theme">Light theme</string>
     <string name="settings_info_battery">Battery optimization</string>
     <string name="settings_info_battery_desc">Opens the system battery optimization allow-list so playback is not interrupted once the screen is off.</string>
     <string name="settings_info_app_details">App details</string>

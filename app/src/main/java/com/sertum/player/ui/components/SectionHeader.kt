@@ -2,12 +2,13 @@ package com.sertum.player.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -21,14 +22,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sertum.player.R
-import com.sertum.player.ui.theme.TextPrimary
-import com.sertum.player.ui.theme.TextSecondary
 import com.sertum.player.ui.theme.WarmGold
+import com.sertum.player.ui.theme.sertumBodyText
+import com.sertum.player.ui.theme.sertumMutedText
 
 /** One option's explanation: its name, and one short sentence about it. */
 data class OptionInfo(val nameRes: Int, val descriptionRes: Int)
@@ -61,12 +66,46 @@ object SectionInfo {
     )
     val theme = listOf(
         OptionInfo(R.string.settings_info_dark_theme, R.string.settings_info_dark_theme_desc),
+        OptionInfo(R.string.settings_info_light_theme, R.string.settings_info_light_theme_desc),
     )
     val background = listOf(
         OptionInfo(R.string.settings_info_battery, R.string.settings_info_battery_desc),
         OptionInfo(R.string.settings_info_app_details, R.string.settings_info_app_details_desc),
     )
 }
+
+/**
+ * Settings option geometry, in **physical pixels on the 1080x2400 reference screen**,
+ * converted by [px]. The earlier revision treated these numbers as dp, which
+ * multiplied everything by the density factor (440/160 = 2.75).
+ */
+private const val SCREEN_DPI = 440f
+
+private fun px(value: Int): Dp = (value * 160f / SCREEN_DPI).dp
+
+/** Widen the (i) tap target without enlarging the mark. */
+private val InfoTapPadding: Dp = 10.dp
+
+/**
+ * Visible gap between a section title and its (i): 20px.
+ *
+ * Calibrated on the device rather than derived. Two effects push the visible distance
+ * past the declared one: the mark's [InfoTapPadding] sits between the title and the
+ * letter, and the title's advance width is a few px wider than its painted ink. The
+ * trailing term is the measured correction for both, so retuning this gap means changing
+ * the leading number alone.
+ */
+private val TitleToInfoGap: Dp = px(20) - InfoTapPadding - px(8)
+
+/**
+ * The (i) is a bare letter: the drawn circle was removed on request.
+ *
+ * It is set in the serif family, italic, while every heading around it is sans. That
+ * contrast is what makes it read as a mark rather than as part of the title text.
+ */
+private const val INFO_GLYPH_SP = 18f
+
+private val InfoFontFamily = FontFamily.Serif
 
 /**
  * Section heading with an (i) button that opens the explanations for everything in
@@ -77,9 +116,6 @@ object SectionInfo {
  * the six per-state subtitles that used to explain the toggles were removed during
  * that redesign. Collapsing the help behind an icon keeps the list clean while making
  * the information reachable, instead of printing a sentence under every option.
- *
- * The icon is a text glyph in a circle rather than a Material icon, so the mark does
- * not depend on the icon set and matches the type around it.
  */
 @Composable
 fun SectionHeader(
@@ -95,7 +131,7 @@ fun SectionHeader(
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(TitleToInfoGap),
     ) {
         Text(
             text = title,
@@ -103,14 +139,25 @@ fun SectionHeader(
             color = MaterialTheme.colorScheme.primary,
         )
         if (options.isNotEmpty()) {
-            // A circled i. Padding widens the tap target without enlarging the mark.
+            // A bare letter with no container, nudged down to sit level with the title.
+            //
+            // CenterVertically aligns the two *layout boxes*, and those are not the same
+            // shape: the title's box carries its line height, while the letter's box
+            // carries only the glyph. Aligning the boxes left the letter's painted centre
+            // 2.5-3px above the title's, which is visible. The offset is the measured
+            // correction, not a guess.
             Text(
-                text = "\u24D8",
+                text = "i",
+                fontSize = INFO_GLYPH_SP.sp,
+                fontFamily = InfoFontFamily,
+                fontStyle = FontStyle.Italic,
+                fontWeight = FontWeight.Medium,
                 color = WarmGold,
-                fontSize = 19.sp,
                 modifier = Modifier
+                    .offset(y = px(3))
+                    .clipToBounds()
                     .clickable { showInfo = true }
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                    .padding(InfoTapPadding),
             )
         }
     }
@@ -138,12 +185,12 @@ fun SectionHeader(
                                 text = stringResource(option.nameRes),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = TextPrimary,
+                                color = sertumBodyText,
                             )
                             Text(
                                 text = stringResource(option.descriptionRes),
                                 fontSize = 13.sp,
-                                color = TextSecondary,
+                                color = sertumMutedText,
                             )
                         }
                     }
@@ -157,5 +204,3 @@ fun SectionHeader(
         )
     }
 }
-
-/** Shorthand for building the option list at a call site. */

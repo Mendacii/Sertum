@@ -1,4 +1,4 @@
-package com.sertum.player.ui
+﻿package com.sertum.player.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -82,7 +82,13 @@ private const val BOTTOM_CHROME_ANIM_MS = 120
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SertumApp(initialTab: Int? = null) {
+fun SertumApp(
+    initialTab: Int? = null,
+    initialInfoSection: String? = null,
+    /** Launch-only theme override for device evidence. Null keeps the stored setting. */
+    initialDarkTheme: Boolean? = null,
+
+) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
@@ -105,7 +111,10 @@ fun SertumApp(initialTab: Int? = null) {
 
     val layoutDirection = LocalLayoutDirection.current
 
-    SertumTheme(darkTheme = settings.darkTheme) {
+    // initialDarkTheme is a launch-only override used for device evidence: the theme
+    // lives in in-memory state, so without it the light theme could only be inspected
+    // by tapping the theme option, which injected input cannot do.
+    SertumTheme(darkTheme = initialDarkTheme ?: settings.darkTheme) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
@@ -189,6 +198,8 @@ fun SertumApp(initialTab: Int? = null) {
                         onTabChange = { selectedTab = it },
                         onAlbumClick = { key -> navController.navigate(SertumDestinations.albumDetail(key)) },
                         onArtistClick = { name -> navController.navigate(SertumDestinations.artistDetail(name)) },
+                        initialInfoSection = initialInfoSection,
+
                     )
                 }
                 composable(

@@ -1,4 +1,4 @@
-package com.sertum.player.ui.theme
+﻿package com.sertum.player.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -15,6 +15,21 @@ private val SertumShapes = Shapes(
     medium = RoundedCornerShape(12.dp),
     large = RoundedCornerShape(16.dp),
 )
+
+/**
+ * Scheme-level registration for the unselected-option colours.
+ *
+ * `secondary` and `tertiary` are the roles Material leaves free here - nothing else in
+ * Sertum uses them - and naming them in the scheme is what lets the tokens below follow
+ * the in-app theme.
+ *
+ * Declared before the schemes: Kotlin initialises top-level properties in file order, so
+ * referencing these from a scheme defined above them does not compile.
+ */
+private val UnselectedIconDark = Color(0xFF8A8A8A)
+private val UnselectedTextDark = Color(0xFFB0B0B0)
+private val UnselectedIconLight = Color(0xFF6E675C)
+private val UnselectedTextLight = Color(0xFF454036)
 
 private val DarkScheme = darkColorScheme(
     primary = WarmGold,
@@ -39,6 +54,9 @@ private val DarkScheme = darkColorScheme(
     surfaceBright = PureBlack,
     outline = HairlineDark,
     outlineVariant = HairlineDark,
+    // Unselected settings options; see sertumUnselectedText/Icon.
+    secondary = UnselectedIconDark,
+    tertiary = UnselectedTextDark,
     error = Color(0xFFCF6679),
 )
 
@@ -52,6 +70,9 @@ private val LightScheme = lightColorScheme(
     surfaceVariant = Color(0xFFECE5D8),
     onSurfaceVariant = InkSecondary,
     outline = Color(0xFFD8D0C2),
+    // Unselected settings options; see sertumUnselectedText/Icon.
+    secondary = UnselectedIconLight,
+    tertiary = UnselectedTextLight,
 )
 
 /**
@@ -72,8 +93,31 @@ private val LightScheme = lightColorScheme(
 val sertumBodyText: Color
     @Composable get() = MaterialTheme.colorScheme.onSurface
 
+/**
+ * Colour of a settings option that is not selected.
+ *
+ * Unselected options are dimmed rather than left at full strength, so the gold of a
+ * selected option stands out without any other decoration. Values are chosen for measured
+ * contrast, not by eye: on black, #B0B0B0 reads 9.7:1 and its icon #8A8A8A 6.1:1; on the
+ * paper background, #454036 reads 9.1:1 and its icon #6E675C 5.0:1. All four clear AA, so
+ * dimming costs no legibility.
+ *
+ * These read `secondary` and `tertiary` from the scheme rather than switching on
+ * `isSystemInDarkTheme()`. That would have been wrong: Sertum's theme is an in-app
+ * setting, not the system one, so a system-theme check would leave the settings page
+ * unswitched whenever the user picked a theme different from the phone's.
+ */
+val sertumUnselectedText: Color
+    @Composable get() = MaterialTheme.colorScheme.tertiary
+
+/** Slightly dimmer than the label, so the icon does not compete with the text. */
+val sertumUnselectedIcon: Color
+    @Composable get() = MaterialTheme.colorScheme.secondary
+
 val sertumMutedText: Color
     @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+
 
 @Composable
 fun SertumTheme(

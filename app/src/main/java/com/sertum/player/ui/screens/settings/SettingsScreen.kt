@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speaker
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +61,7 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(initialInfoSection: String? = null) {
     val state by SettingsStateHolder.state.collectAsState()
+
     val context = LocalContext.current
     val app = context.applicationContext as SertumApplication
     val scanProgress by app.libraryScanner.progress.collectAsState()
@@ -234,12 +237,23 @@ fun SettingsScreen(initialInfoSection: String? = null) {
 
         SectionTitle(stringResource(R.string.settings_theme), SectionInfo.theme, initiallyOpen = initialInfoSection == "theme")
         SettingsTileGrid {
+            // Two options rather than one toggle: a switch can only say on or off, while
+            // the page is really choosing between two named themes, and naming the light
+            // one is what makes that visible. Each option sets its own value rather than
+            // flipping, so tapping the already-active one is a no-op instead of a surprise.
             SettingsTile(
                 label = stringResource(R.string.settings_dark_theme),
                 icon = Icons.Filled.DarkMode,
                 emphasis = TileEmphasis.TOGGLE,
                 selected = state.darkTheme,
-                onClick = { SettingsStateHolder.update { it.copy(darkTheme = !state.darkTheme) } },
+                onClick = { SettingsStateHolder.update { it.copy(darkTheme = true) } },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_light_theme),
+                icon = Icons.Filled.LightMode,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = !state.darkTheme,
+                onClick = { SettingsStateHolder.update { it.copy(darkTheme = false) } },
             )
         }
 

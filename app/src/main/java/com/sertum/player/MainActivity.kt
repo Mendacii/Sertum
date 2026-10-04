@@ -1,4 +1,4 @@
-package com.sertum.player
+﻿package com.sertum.player
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.sertum.player.ui.SertumApp
+import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.ui.theme.SertumTheme
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +24,35 @@ class MainActivity : ComponentActivity() {
          * behaviour (start on Songs), so nothing changes for real launches.
          */
         const val EXTRA_INITIAL_TAB = "tab"
+
+        /**
+         * Opens one section's explanation dialog on launch, e.g.
+         * `adb shell am start -n com.sertum.player/.MainActivity --es tab settings --es info output`.
+         *
+         * Same reason as [EXTRA_INITIAL_TAB]: dialogs cannot be opened by injected
+         * input on the reference device, so without this the dialog contents could
+         * never be checked without a human tapping. Unknown values open nothing.
+         */
+        const val EXTRA_INFO_SECTION = "info"
+
+        /**
+         * Forces a theme for the launch, e.g. `--es theme light`, so the light scheme
+         * can be inspected on device. The theme is in-memory state that defaults to
+         * dark, and injected input cannot tap the theme option, so this was the only
+         * way to check that the settings page follows the scheme.
+         */
+        const val EXTRA_THEME = "theme"
+
+        /**
+         * Sets the in-memory theme state on launch, e.g. `--es stheme light`, without
+         * overriding it in the composition.
+         *
+         * [EXTRA_THEME] renders a theme regardless of state, which hides whether the
+         * state itself is working. This one writes the state instead, so a device check
+         * can tell "the theme renders" apart from "the toggle updates the state".
+         */
+        const val EXTRA_STATE_THEME = "stheme"
+
     }
 
     private val notificationPermissionLauncher =
@@ -31,6 +61,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as SertumApplication
+        // Applies the state-level theme override before any UI is built, so the state and
+        // the rendered theme agree instead of diverging.
+        if (savedInstanceState == null) {
+            when (intent?.getStringExtra(EXTRA_STATE_THEME)) {
+                "light" -> SettingsStateHolder.update { it.copy(darkTheme = false) }
+                "dark" -> SettingsStateHolder.update { it.copy(darkTheme = true) }
+            }
+        }
         app.playbackController.notificationPermissionRequester = {
             if (
                 Build.VERSION.SDK_INT >= 33 &&
@@ -56,7 +94,24 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             SertumTheme {
-                SertumApp(initialTab = requestedTab)
+                SertumApp(
+                    initialTab = requestedTab,
+                    initialInfoSection = if (savedInstanceState != null) {
+                        null
+                    } else {
+                        intent?.getStringExtra(EXTRA_INFO_SECTION)
+                    },
+
+                    initialDarkTheme = if (savedInstanceState != null) {
+                        null
+                    } else {
+                        when (intent?.getStringExtra(EXTRA_THEME)) {
+                            "light" -> false
+                            "dark" -> true
+                            else -> null
+                        }
+                    },
+                )
             }
         }
     }

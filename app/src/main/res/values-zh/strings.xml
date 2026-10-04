@@ -99,7 +99,10 @@
     <string name="settings_info_language_en">English</string>
     <string name="settings_info_language_en_desc">强制界面显示英文，不受系统语言影响。</string>
     <string name="settings_info_dark_theme">深色主题</string>
-    <string name="settings_info_dark_theme_desc">纯黑背景搭配暖金色高亮，适合 OLED 屏幕和暗光环境。关闭后使用浅色主题。</string>
+    <string name="settings_info_dark_theme_desc">纯黑背景搭配暖金色高亮，适合 OLED 屏幕和暗光环境。默认使用。</string>
+    <string name="settings_info_light_theme">浅色主题</string>
+    <string name="settings_info_light_theme_desc">暖白纸感背景搭配深色文字，适合明亮环境和白天使用。</string>
+    <string name="settings_light_theme">浅色主题</string>
     <string name="settings_info_battery">电池优化</string>
     <string name="settings_info_battery_desc">打开系统的电池优化白名单，避免锁屏后播放被系统中断。</string>
     <string name="settings_info_app_details">应用详情</string>

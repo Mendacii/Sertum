@@ -1,4 +1,4 @@
-package com.sertum.player.ui.navigation
+﻿package com.sertum.player.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
@@ -15,7 +15,7 @@ import com.sertum.player.ui.screens.settings.SettingsScreen
 
 /**
  * The four top-level tabs as one swipeable pager (user preference, 2026-08-16):
- * 歌曲 -> 专辑 -> 艺术家 -> 设置. Tab selection and the pager position are
+ * 姝屾洸 -> 涓撹緫 -> 鑹烘湳瀹?-> 璁剧疆. Tab selection and the pager position are
  * kept in sync by [selectedTab]/[onTabChange].
  */
 @Composable
@@ -24,6 +24,9 @@ fun MainTabs(
     onTabChange: (Int) -> Unit,
     onAlbumClick: (String) -> Unit,
     onArtistClick: (String) -> Unit,
+    /** Launch-only: opens one section's explanation dialog. Null on normal launches. */
+    initialInfoSection: String? = null,
+
 ) {
     val pagerState = rememberPagerState(initialPage = selectedTab) { 4 }
 
@@ -43,7 +46,7 @@ fun MainTabs(
             0 -> SongsScreen()
             1 -> AlbumsScreen(onAlbumClick = onAlbumClick)
             2 -> ArtistsScreen(onArtistClick = onArtistClick)
-            else -> SettingsScreen()
+            else -> SettingsScreen(initialInfoSection = initialInfoSection)
         }
     }
 }
