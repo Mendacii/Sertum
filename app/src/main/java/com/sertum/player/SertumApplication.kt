@@ -94,7 +94,11 @@ class SertumApplication : Application() {
 
     val database: SertumDatabase by lazy {
         Room.databaseBuilder(this, SertumDatabase::class.java, "sertum.db")
-            .addMigrations(SertumDatabase.MIGRATION_1_2, SertumDatabase.MIGRATION_2_3)
+            .addMigrations(
+                SertumDatabase.MIGRATION_1_2,
+                SertumDatabase.MIGRATION_2_3,
+                SertumDatabase.MIGRATION_3_4,
+            )
             .build()
     }
 

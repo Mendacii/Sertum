@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CoverEntity::class,
         PlaybackPositionEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class SertumDatabase : RoomDatabase() {
@@ -36,6 +36,18 @@ abstract class SertumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE albums ADD COLUMN embeddedCoverPath TEXT")
                 db.execSQL("ALTER TABLE albums ADD COLUMN folderCoverPath TEXT")
+            }
+        }
+
+        /**
+         * Adds the artist's chosen representative cover.
+         *
+         * Nullable with no default, so existing rows keep null and fall back to the first
+         * album that has a cover - no data is invented for a choice nobody has made.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE artists ADD COLUMN imageAlbumKey TEXT")
             }
         }
     }

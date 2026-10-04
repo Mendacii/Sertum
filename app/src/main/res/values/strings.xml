@@ -65,6 +65,12 @@
     <string name="settings_scan_collecting">Scanning folders…</string>
     <string name="settings_scan_progress">Scanning: %1$d tracks found, %2$d parsed, %3$d failed</string>
     <string name="settings_rescan">Rescan library</string>
+    <!-- Artist list artwork -->
+    <string name="artist_choose_image">Choose artwork</string>
+    <string name="artist_choose_image_hint">Pick which album\'s cover stands for this artist in the list.</string>
+    <string name="artist_image_auto">Automatic</string>
+    <string name="artist_image_auto_desc">The first album of theirs with a cover</string>
+    <string name="artist_close">Close</string>
     <string name="settings_output_mode">Output mode</string>
     <string name="settings_output_usb_exclusive">USB exclusive</string>
     <string name="settings_language">Language</string>

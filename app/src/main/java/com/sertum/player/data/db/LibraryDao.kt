@@ -31,6 +31,26 @@ interface LibraryDao {
     @Query("SELECT * FROM artists ORDER BY sortKey COLLATE NOCASE")
     fun observeArtists(): Flow<List<ArtistEntity>>
 
+    /**
+     * Every artist's chosen cover album, for carrying the choices across a rescan.
+     *
+     * A scan clears the artist table before repopulating it, so anything held only on
+     * those rows is destroyed by design. The choices are user data, not scan output, so
+     * the scanner reads them here first and writes them back.
+     */
+    @Query("SELECT name, imageAlbumKey FROM artists WHERE imageAlbumKey IS NOT NULL")
+    suspend fun artistImageChoices(): List<ArtistImageChoice>
+
+    /**
+     * Sets which album's cover represents an artist.
+     *
+     * A targeted update rather than an upsert: the scanner rewrites artist rows on every
+     * scan, and an upsert built from a partially filled entity would blank the fields it
+     * did not carry. This touches one column and nothing else.
+     */
+    @Query("UPDATE artists SET imageAlbumKey = :albumKey WHERE name = :name")
+    suspend fun setArtistImageAlbum(name: String, albumKey: String?)
+
     @Upsert
     suspend fun upsertTrack(track: TrackEntity)
 

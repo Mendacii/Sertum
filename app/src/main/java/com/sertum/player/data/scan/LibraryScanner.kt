@@ -137,9 +137,16 @@ class LibraryScanner(
                 )
             }
 
+        // Which album art each artist shows is the user's choice, not scan output, and the
+        // clear below deletes the rows that hold it. Read it first, then write it back
+        // with the fresh rows, or every rescan would silently reset every artist.
+        val imageChoices = dao.artistImageChoices().associate { it.name to it.imageAlbumKey }
+
         dao.clearAlbumsAndArtists()
         albums.forEach { dao.upsertAlbum(it) }
-        artists.forEach { dao.upsertArtist(it) }
+        artists.forEach { artist ->
+            dao.upsertArtist(artist.copy(imageAlbumKey = imageChoices[artist.name]))
+        }
         _progress.value = ScanProgress("done", candidates.size, parsed, failed)
         return ScanStats(candidates.size, parsed, failed, albums.size, artists.size)
     }

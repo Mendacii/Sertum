@@ -1,7 +1,8 @@
-package com.sertum.player.data.db
+﻿package com.sertum.player.data.db
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.sertum.player.data.covers.CoverResolver
 
 @Entity(tableName = "albums")
 data class AlbumEntity(
@@ -15,3 +16,14 @@ data class AlbumEntity(
     val folderCoverPath: String?,
     val trackCount: Int,
 )
+
+/**
+ * True when this album has artwork that can actually be drawn.
+ *
+ * `coverRef` is non-null for every album - the scanner writes
+ * [CoverResolver.PLACEHOLDER_REF] when it finds nothing - so a null check alone reports
+ * artwork that is not there. Three screens now ask this question, so it lives here rather
+ * than being spelled out at each call site.
+ */
+fun AlbumEntity.hasRealCover(): Boolean =
+    coverRef != null && coverRef != CoverResolver.PLACEHOLDER_REF

@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.screens.library
+package com.sertum.player.ui.screens.library
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -24,13 +27,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sertum.player.R
+import coil3.compose.AsyncImage
+import com.sertum.player.data.covers.CoverResolver
 import com.sertum.player.SertumApplication
+import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.data.db.ArtistEntity
+import com.sertum.player.data.db.hasRealCover
 import com.sertum.player.ui.components.AlphabetRail
 import com.sertum.player.ui.components.startsWithNonLatin
 import com.sertum.player.ui.theme.WarmGold
@@ -40,6 +50,9 @@ import kotlinx.coroutines.launch
 fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
     val dao = (LocalContext.current.applicationContext as SertumApplication).database.libraryDao()
     val artists by dao.observeArtists().collectAsState(initial = null as List<ArtistEntity>?)
+    // Albums are read whole and matched by artist name rather than through a relation,
+    // because the list needs one cover per artist and Room would emit a query per row.
+    val albums by dao.observeAlbums().collectAsState(initial = emptyList())
     var query by remember { mutableStateOf("") }
     var selectedLetter by remember { mutableStateOf<Char?>(null) }
     val listState = rememberLazyListState()
@@ -48,6 +61,29 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
         artists.orEmpty()
     } else {
         artists.orEmpty().filter { it.name.contains(query, ignoreCase = true) }
+    }
+    // One cover per artist, resolved once here rather than per row.
+    //
+    // Preference order: the album the user chose for this artist, then the artist's first
+    // album that actually carries artwork, then nothing - in which case the row falls back
+    // to the artist's initial, which is what the list showed for every artist before.
+    //
+    // The middle step matters more than it looks: a third of the library's albums resolve
+    // to CoverResolver.PLACEHOLDER_REF, so "the artist's first album" is not the same as
+    // "an album with a cover", and taking the first blindly would leave most artists
+    // showing an empty square.
+    val coverByArtist = remember(albums, artists) {
+        val albumsByArtist = albums.groupBy { it.albumArtist }
+        val albumByKey = albums.associateBy { it.albumKey }
+        buildMap {
+            for (artist in artists.orEmpty()) {
+                val forThisArtist = albumsByArtist[artist.name].orEmpty()
+                val chosen = artist.imageAlbumKey?.let { albumByKey[it] }
+                val album = chosen ?: forThisArtist.firstOrNull { it.hasRealCover() }
+                val ref = album?.coverRef?.takeIf { it != CoverResolver.PLACEHOLDER_REF }
+                if (ref != null) put(artist.name, ref)
+            }
+        }
     }
     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -116,13 +152,30 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
                                     .padding(horizontal = 16.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = artist.name.take(1).uppercase(),
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
+                                Box(Modifier.size(ArtistCoverSize), contentAlignment = Alignment.Center) {
+                                    val coverRef = coverByArtist[artist.name]
+                                    if (coverRef != null) {
+                                        AsyncImage(
+                                            model = coverRef,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(ArtistCoverShape),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                    } else {
+                                        // No artwork anywhere in this artist's albums: the
+                                        // initial is still the honest thing to show.
+                                        Text(
+                                            text = artist.name.take(1).uppercase(),
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                 }
+                                // Was flush against the cover. 20px, in physical pixels
+                                // like the rest of this file's measured values.
+                                Spacer(Modifier.width(px(20)))
                                 Column(Modifier.weight(1f)) {
                                     Text(artist.name, style = MaterialTheme.typography.titleMedium)
                                     Text(
@@ -152,3 +205,25 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
         }
     }
 }
+
+/**
+ * The cover square in the artist list, and the rounding the album grid uses.
+ *
+ * 45dp, which is 124px at this device's 440dpi - the album grid's tiles are 250px, so this
+ * reads as the same square at list scale rather than as a new shape. The row previously
+ * carried a bare 40dp letter with no container, so the row grows by 5dp and the text
+ * beside it is untouched.
+ */
+private val ArtistCoverSize = 45.dp
+private val ArtistCoverShape = RoundedCornerShape(12.dp)
+
+/**
+ * Physical pixels to dp, for the sizes on this screen.
+ *
+ * The reference device reports 440dpi, so 1dp is 2.75px. Values here are written in the
+ * pixels they were specified in and converted once, rather than being pre-divided at each
+ * call site where the intent would be lost.
+ */
+private const val SCREEN_DPI = 440f
+
+private fun px(value: Int): Dp = (value * 160f / SCREEN_DPI).dp

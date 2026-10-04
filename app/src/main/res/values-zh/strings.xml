@@ -63,6 +63,12 @@
     <string name="settings_scan_collecting">正在扫描文件夹…</string>
     <string name="settings_scan_progress">扫描中：发现 %1$d 首，已解析 %2$d，失败 %3$d</string>
     <string name="settings_rescan">重新扫描曲库</string>
+    <!-- 艺术家列表配图 -->
+    <string name="artist_choose_image">选择展示封面</string>
+    <string name="artist_choose_image_hint">选择用哪张专辑封面代表这位艺术家。</string>
+    <string name="artist_image_auto">自动</string>
+    <string name="artist_image_auto_desc">取其第一张有封面的专辑</string>
+    <string name="artist_close">关闭</string>
     <string name="settings_output_mode">输出模式</string>
     <string name="settings_output_usb_exclusive">USB 独占</string>
     <string name="settings_language">语言</string>
