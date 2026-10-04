@@ -45,6 +45,17 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_ALBUM = "album"
 
         /**
+         * Selects the round cover on launch, for device evidence.
+         *
+         * Round cover is in-memory state, so a device check of the ring around it would
+         * otherwise need a tap on the settings option, which cannot be injected.
+         */
+        const val EXTRA_ROUND_COVER = "roundcover"
+
+        /** Opens the full player on launch, for device evidence. See SertumApp.openPlayer. */
+        const val EXTRA_OPEN_PLAYER = "player"
+
+        /**
          * Forces a theme for the launch, e.g. `--es theme light`, so the light scheme
          * can be inspected on device. The theme is in-memory state that defaults to
          * dark, and injected input cannot tap the theme option, so this was the only
@@ -77,6 +88,9 @@ class MainActivity : ComponentActivity() {
                 "light" -> SettingsStateHolder.update { it.copy(darkTheme = false) }
                 "dark" -> SettingsStateHolder.update { it.copy(darkTheme = true) }
             }
+            if (intent?.getStringExtra(EXTRA_ROUND_COVER) == "1") {
+                SettingsStateHolder.update { it.copy(roundCover = true) }
+            }
         }
         app.playbackController.notificationPermissionRequester = {
             if (
@@ -105,6 +119,8 @@ class MainActivity : ComponentActivity() {
             SertumTheme {
                 SertumApp(
                     initialTab = requestedTab,
+                    openPlayer = savedInstanceState == null &&
+                        intent?.getStringExtra(EXTRA_OPEN_PLAYER) == "1",
                     initialAlbumKey = if (savedInstanceState != null) {
                         null
                     } else {

@@ -89,12 +89,21 @@ fun SertumApp(
     initialDarkTheme: Boolean? = null,
     /** Launch-only: opens one album's detail page. Null on normal launches. */
     initialAlbumKey: String? = null,
+    /**
+     * Launch-only: opens the full player, and starts the first track when there is nothing
+     * loaded so it has artwork to show.
+     *
+     * The player is reached by tapping the mini player, and taps cannot be injected on the
+     * reference device, so without this the page - and anything animated inside it - could
+     * not be inspected at all.
+     */
+    openPlayer: Boolean = false,
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab ?: 0) }
-    var showNowPlaying by rememberSaveable { mutableStateOf(false) }
+    var showNowPlaying by rememberSaveable { mutableStateOf(openPlayer) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
     val settings by com.sertum.player.ui.settings.SettingsStateHolder.state.collectAsState()
     val context = LocalContext.current
