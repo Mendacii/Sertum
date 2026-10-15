@@ -139,7 +139,12 @@ val coreCoverageExcludes = listOf(
     "**/domain/playback/BackendCapabilities.class",
     "**/domain/playback/StreamSpec.class",
     "**/domain/playback/PlaybackState.class",
-    "**/domain/playback/RoomResumePositionStore*",
+    // "**/domain/playback/RoomResumePositionStore*" was here. The class is gone - resume
+    // position was removed at the user's request and its schema dropped in migration 6 to 7 -
+    // so the pattern matched nothing. Removed rather than left, because this list is the
+    // coverage denominator and the project already has one unexplained number in it (90.2%
+    // recorded at M5 against 80.0% measured at M6); a rule naming a class that does not exist
+    // is the last thing that needs to sit here unexplained.
     "**/data/metadata/TrackMetadata.class",
     "**/data/scan/MediaStoreSource*",
     "**/data/scan/SafSource*",
