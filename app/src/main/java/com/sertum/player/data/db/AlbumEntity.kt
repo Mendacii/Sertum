@@ -1,4 +1,4 @@
-﻿package com.sertum.player.data.db
+package com.sertum.player.data.db
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -15,6 +15,17 @@ data class AlbumEntity(
     val embeddedCoverPath: String?,
     val folderCoverPath: String?,
     val trackCount: Int,
+    /**
+     * Container of the files in this album, e.g. `FLAC` or `MP3`, for the quality label.
+     *
+     * Part of the album's identity too - see [com.sertum.player.domain.model.AlbumKey] - so a
+     * lossless release and a lossy copy of it are two albums with the same title rather than
+     * one list holding both. The title is deliberately left alone so the entries read the
+     * same and the label is what distinguishes them.
+     *
+     * Null when the platform reports no recognisable type.
+     */
+    val format: String? = null,
 )
 
 /**

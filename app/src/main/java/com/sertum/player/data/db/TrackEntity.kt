@@ -18,6 +18,15 @@ data class TrackEntity(
     val albumKey: String,
     val discNumber: Int?,
     val trackNumber: Int?,
+    /**
+     * The directory this track sits in, used as the first key when ordering an album.
+     *
+     * A multi-disc release normally has no disc number to read - the platform exposes a track
+     * number tag but no disc tag - and its directories already run disc 1 first, so the
+     * directory orders the discs without anything being guessed. Sorting on the track number
+     * alone interleaves them: 1, 1, 2, 2 rather than 1..13 then 1..13.
+     */
+    val discBand: String?,
     val year: Int?,
     val genre: String?,
     val durationMs: Long,

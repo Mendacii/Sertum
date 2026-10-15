@@ -117,6 +117,21 @@ fun AlbumDetailScreen(albumKey: String) {
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // What this album is stored as. It is the only thing distinguishing two
+                    // entries that carry the same title, since a lossless release and a lossy
+                    // copy are separate albums and their names are deliberately identical.
+                    // Omitted entirely when the container is unknown, rather than shown empty.
+                    audioQualityLabel(
+                        format = album?.format,
+                        sampleRate = firstTrack?.sampleRate,
+                        bitDepth = firstTrack?.bitDepth,
+                    )?.let { quality ->
+                        Text(
+                            text = quality,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = WarmGold,
+                        )
+                    }
                 }
             }
             AlbumActionGrid(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -194,6 +209,29 @@ private val ActionHeight = px(120)
 private val ActionIconSize = px(38)
 private val ActionIconLabelGap = px(12)
 private const val ACTION_LABEL_SP = 15f
+
+/**
+ * One line describing what the album is stored as, e.g. `FLAC · 24bit / 96kHz`.
+ *
+ * Null when the container is unknown, so the caller omits the line entirely rather than leaving
+ * a separator with nothing after it. The parts are assembled rather than assumed: a lossy
+ * container has no bit depth to report, the platform does not expose a sample rate for every
+ * file, and either may be absent.
+ *
+ * A non-positive value counts as absent. Printing `0kHz` would be worse than printing nothing.
+ */
+internal fun audioQualityLabel(format: String?, sampleRate: Int?, bitDepth: Int?): String? {
+    if (format.isNullOrBlank()) return null
+    val depth = bitDepth?.takeIf { it > 0 }?.let { "${it}bit" }
+    val rate = sampleRate?.takeIf { it > 0 }?.let {
+        // One decimal, with a trailing ".0" dropped so the same position does not carry a
+        // decimal for one album and not another: 44.1kHz and 48kHz, not 44.1kHz and 48.0kHz.
+        val text = String.format(java.util.Locale.US, "%.1f", it / 1000.0).removeSuffix(".0")
+        "${text}kHz"
+    }
+    val detail = listOfNotNull(depth, rate).joinToString(" / ")
+    return if (detail.isEmpty()) format else "$format · $detail"
+}
 
 /**
  * Lays the album's actions out in rows of three.

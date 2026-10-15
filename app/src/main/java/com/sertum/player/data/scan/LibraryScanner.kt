@@ -71,12 +71,18 @@ class LibraryScanner(
     }
 
     suspend fun scanBlocking(): ScanStats {
+        // Timed so the cost of what the parse loop reads can be measured rather than argued
+        // about. The per-file metadata extraction added to fill discBand, sampleRate and
+        // bitDepth reads from the header the retriever has already parsed, so it is expected
+        // to be free; this is what says whether it is.
+        val startedAt = android.os.SystemClock.elapsedRealtime()
         val mediaCandidates = withContext(Dispatchers.IO) { MediaStoreSource(context).scan() }
         val safCandidates = safDirectories.load().flatMap { treeUri ->
             runCatching { SafSource().scan(context, treeUri) }.getOrDefault(emptyList())
         }
         val candidates = (mediaCandidates + safCandidates).distinctBy { it.uri }
         _progress.value = ScanProgress(phase = "parsing", candidates = candidates.size)
+        val parseStartedAt = android.os.SystemClock.elapsedRealtime()
         var parsed = 0
         var failed = 0
         val parsedTracks = mutableListOf<ParsedTrack>()
@@ -124,6 +130,9 @@ class LibraryScanner(
                 embeddedCoverPath = embeddedPath,
                 folderCoverPath = folderCover,
                 trackCount = rows.size,
+                // Every track in a group shares a format, because the format is part of the
+                // key the group was formed by.
+                format = AudioFormat.labelFor(first.track.mimeType),
             )
         }
         val artists = tracks
@@ -148,6 +157,13 @@ class LibraryScanner(
             dao.upsertArtist(artist.copy(imageAlbumKey = imageChoices[artist.name]))
         }
         _progress.value = ScanProgress("done", candidates.size, parsed, failed)
+        val finishedAt = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i(
+            "SertumScanTiming",
+            "candidates=${candidates.size} parsed=$parsed failed=$failed " +
+                "enumerateMs=${parseStartedAt - startedAt} parseMs=${finishedAt - parseStartedAt} " +
+                "totalMs=${finishedAt - startedAt}",
+        )
         return ScanStats(candidates.size, parsed, failed, albums.size, artists.size)
     }
 
@@ -171,11 +187,19 @@ class LibraryScanner(
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
             }.getOrNull() ?: artist
             val albumTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            // Read before the album key, which now depends on the container: a lossless release
+            // and a lossy copy of it are separate albums rather than one list holding both.
+            val mimeType = runCatching {
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: mimeTypeFromExtension(candidate.path)
+                ?: "audio/*"
             val albumKey = AlbumKey.resolve(
                 title = albumTitle,
                 albumArtist = albumArtist,
                 artist = artist,
                 folderPath = candidate.path.substringBeforeLast('/', "").takeIf { it.isNotBlank() },
+                format = AudioFormat.labelFor(mimeType),
             )
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
@@ -183,8 +207,15 @@ class LibraryScanner(
             val trackNumber = runCatching {
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()
             }.getOrNull() ?: trackNumberFromFileName(candidate.path)
-            val mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
-                ?: "audio/*"
+            // Sampled from the same already-parsed header, so these cost no extra file access.
+            // Absent for lossy containers, which have no bit depth to report - MP3 shows a
+            // sample rate and no depth, which is the honest answer rather than a guess.
+            val sampleRate = runCatching {
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull()
+            }.getOrNull()
+            val bitDepth = runCatching {
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITS_PER_SAMPLE)?.toIntOrNull()
+            }.getOrNull()
             val embeddedPicture = if (embeddedAttempted.add(albumKey.key)) {
                 runCatching { retriever.embeddedPicture }.getOrNull()
             } else {
@@ -200,11 +231,12 @@ class LibraryScanner(
                 albumKey = albumKey.key,
                 discNumber = null,
                 trackNumber = trackNumber,
+                discBand = discBandOf(candidate.path),
                 year = year,
                 genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE),
                 durationMs = durationMs,
-                sampleRate = null,
-                bitDepth = null,
+                sampleRate = sampleRate,
+                bitDepth = bitDepth,
                 mimeType = mimeType,
                 source = SourceType.MEDIA_STORE,
                 coverRef = null,
@@ -259,3 +291,47 @@ internal fun trackNumberFromFileName(path: String): Int? {
     val stem = DISC_DOT_TRACK_PREFIX.replace(name.substringBeforeLast('.'), "")
     return TRACK_NUMBER_PREFIX.find(stem)?.groupValues?.get(1)?.toIntOrNull()
 }
+
+/**
+ * The directory a track sits in, used as the first key when ordering an album.
+ *
+ * A multi-disc release usually carries no disc number anywhere - the platform exposes a track
+ * number tag but no disc tag - so the disc cannot be read from metadata. It does not need to
+ * be: the directories a release is stored in already run disc 1 first, so the directory is a
+ * disc ordering that gets read instead of guessed. DENKARE THE BEST is the case in point: its
+ * two discs are `Disc 1` and `Disc 2` folders, and each now lists 1..17 rather than the two
+ * interleaving.
+ *
+ * When a release keeps both discs in **one** folder, the directory is the same for every track
+ * and orders nothing. In that case the file name carries the disc as a `disc.track.` prefix -
+ * the same prefix [trackNumberFromFileName] already discards to find the track - so it is
+ * appended here, which separates the discs without a disc number ever being interpreted.
+ *
+ * The limitation is lexicographic ordering, so a tenth disc sorts between the first and the
+ * second ("Disc 10" before "Disc 2"). Releases with that many discs are not in the library, and
+ * reading a number out of the directory instead would reintroduce the guessing this avoids.
+ */
+internal fun discBandOf(path: String): String {
+    val directory = path.substringBeforeLast('/', "")
+    val fileName = path.substringAfterLast('/')
+    val discPrefix = DISC_DOT_TRACK_PREFIX.find(fileName)?.value ?: return directory
+    return "$directory/$discPrefix"
+}
+
+/**
+ * MIME type from a file extension, for when the platform does not report one.
+ *
+ * A backstop rather than the primary source: MediaStore reports a type for every audio file in
+ * this library, but the SAF source can hand over a path whose type never reaches the retriever,
+ * and without a type such a track would fall out of its album's format group.
+ */
+private fun mimeTypeFromExtension(path: String): String? =
+    when (path.substringAfterLast('.', "").lowercase()) {
+        "flac" -> "audio/flac"
+        "mp3" -> "audio/mpeg"
+        "m4a", "mp4", "aac" -> "audio/mp4"
+        "ogg", "oga", "opus" -> "audio/ogg"
+        "wav", "wave" -> "audio/x-wav"
+        "aif", "aiff", "aifc" -> "audio/x-aiff"
+        else -> null
+    }

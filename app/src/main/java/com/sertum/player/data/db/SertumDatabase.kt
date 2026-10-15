@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CoverEntity::class,
         PlaybackPositionEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class SertumDatabase : RoomDatabase() {
@@ -48,6 +48,25 @@ abstract class SertumDatabase : RoomDatabase() {
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE artists ADD COLUMN imageAlbumKey TEXT")
+            }
+        }
+
+        /**
+         * Adds the disc ordering key and the album's container label.
+         *
+         * Both nullable and left null for existing rows. Their values are filled by the next
+         * scan rather than by the migration, because they come from reading each file, which
+         * a migration cannot do - and a scan rewrites every track and album anyway. Until
+         * then the columns are simply absent, which is inert: the album ordering falls back
+         * to the track number exactly as it did before, and the quality label shows nothing.
+         *
+         * The track's `sampleRate` and `bitDepth` columns already exist; they were left null
+         * by the scanner and start being populated with the same scan.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN discBand TEXT")
+                db.execSQL("ALTER TABLE albums ADD COLUMN format TEXT")
             }
         }
     }

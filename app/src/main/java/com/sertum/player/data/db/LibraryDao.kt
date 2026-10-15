@@ -15,7 +15,13 @@ interface LibraryDao {
 
     @Query(
         "SELECT * FROM tracks WHERE albumKey = :albumKey " +
-            "ORDER BY COALESCE(discNumber, 999) ASC, COALESCE(trackNumber, 999) ASC, title COLLATE NOCASE ASC",
+            // discBand first: a multi-disc release numbers each disc from one, so ordering on
+            // the track number alone interleaves them. The band is the directory, which
+            // already runs disc 1 first, so the discs come out in order without a disc number
+            // having to be read - the platform exposes no disc tag. It is constant within a
+            // single-disc album, so the track number remains the effective first key there.
+            "ORDER BY COALESCE(discBand, '') ASC, " +
+            "COALESCE(discNumber, 999) ASC, COALESCE(trackNumber, 999) ASC, title COLLATE NOCASE ASC",
     )
     fun tracksForAlbum(albumKey: String): Flow<List<TrackEntity>>
 
