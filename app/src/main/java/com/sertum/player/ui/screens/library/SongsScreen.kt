@@ -128,6 +128,10 @@ fun TrackEntity.toPlayable(): PlayableTrack = PlayableTrack(
     artist = artist,
     album = albumTitle,
     albumKey = albumKey,
+    // Carried through so a track carved out of a single-file disc rip plays only its own span.
+    // Null for an ordinary track, which is the whole file.
+    startMs = startMs,
+    endMs = endMs,
 )
 
 @Composable

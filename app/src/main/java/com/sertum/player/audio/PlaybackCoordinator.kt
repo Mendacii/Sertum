@@ -52,6 +52,15 @@ data class PlayableTrack(
     val album: String?,
     val albumKey: String? = null,
     val coverRef: String? = null,
+    /**
+     * The span of [uri] this track occupies, for a track carved out of a single-file disc rip.
+     *
+     * Null for an ordinary track, which is the whole file. [endMs] is null on the last track of
+     * a rip, whose end is the end of the file - clipping it to an invented end would cut the
+     * disc short.
+     */
+    val startMs: Long? = null,
+    val endMs: Long? = null,
 )
 
 enum class UsbRecoveryState { NONE, DETACHED, RECOVERING, RECOVERED, FAILED }
@@ -491,17 +500,32 @@ class PlaybackCoordinator(
         notificationPermissionRequester?.invoke()
     }
 
-    private fun PlayableTrack.toMediaItem(): MediaItem = MediaItem.Builder()
-        .setUri(uri)
-        .setMediaId(id.toString())
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle(title)
-                .setArtist(artist)
-                .setAlbumTitle(album)
-                .build(),
-        )
-        .build()
+    private fun PlayableTrack.toMediaItem(): MediaItem {
+        val builder = MediaItem.Builder()
+            .setUri(uri)
+            .setMediaId(id.toString())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .setArtist(artist)
+                    .setAlbumTitle(album)
+                    .build(),
+            )
+        // A track carved out of a single-file disc rip is a span of the file rather than a file
+        // of its own, so playback is limited to that span. The next track then reads from the
+        // same file at its own offset, which is why a split disc plays continuously.
+        if (startMs != null) {
+            val clipping = MediaItem.ClippingConfiguration.Builder()
+                // Seeking to a non-keyframe leaves a gap of silence at the start, and every
+                // boundary here is a seek into a lossless stream.
+                .setStartsAtKeyFrame(true)
+                .setStartPositionMs(startMs)
+            // Absent on the final track of a rip, whose end is the end of the file.
+            endMs?.let { clipping.setEndPositionMs(it) }
+            builder.setClippingConfiguration(clipping.build())
+        }
+        return builder.build()
+    }
 
     companion object {
         const val MAX_USB_RECONNECT_ATTEMPTS = 3

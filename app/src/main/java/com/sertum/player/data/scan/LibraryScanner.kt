@@ -301,13 +301,14 @@ class LibraryScanner(
         }
         if (claimed.isEmpty()) return parsed
 
-        // One line per scan. This stage is silent when it does nothing and does nothing when
-        // it is wrong, so without the counts a failure here reads as "no CUE was split" with
-        // no way to tell whether the sheet was unreadable, unmatched, or simply absent.
+        // One line per scan. This stage is silent when it does nothing and does nothing when it
+        // is wrong, so without the counts a failure here reads as "no CUE was split" with no
+        // way to tell whether the sheet was unreadable, unmatched, or simply absent. Kept
+        // deliberately short: the per-disc breakdown that diagnosed the first attempt was
+        // useful then and would be noise every scan.
         android.util.Log.i(
             "SertumCue",
-            "sheets=${sheets.size} claimed=${claimed.size} " +
-                claimed.entries.joinToString(" ") { (path, sheet) -> "${path.substringAfterLast('/')}=${sheet.tracks.size}" },
+            "sheets=${sheets.size} discs=${claimed.size} tracks=${claimed.values.sumOf { it.tracks.size }}",
         )
 
         return parsed.flatMap { parsedTrack ->
