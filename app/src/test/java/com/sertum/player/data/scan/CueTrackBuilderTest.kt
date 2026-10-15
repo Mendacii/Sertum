@@ -46,9 +46,9 @@ class CueTrackBuilderTest {
     private val cue = CueSheet(
         audioFileNames = listOf("Agony (Japan).flac"),
         tracks = listOf(
-            CueTrack(number = 1, title = "Temptation", startMs = 0L),
-            CueTrack(number = 2, title = "The Hypocrisy", startMs = 107_546L),
-            CueTrack(number = 3, title = "The Imposition", startMs = 438_720L),
+            CueTrack(number = 1, title = "Temptation", performer = "Fleshgod Apocalypse", startMs = 0L),
+            CueTrack(number = 2, title = "The Hypocrisy", performer = "Fleshgod Apocalypse", startMs = 107_546L),
+            CueTrack(number = 3, title = "The Imposition", performer = "Fleshgod Apocalypse", startMs = 438_720L),
         ),
     )
 
@@ -103,8 +103,8 @@ class CueTrackBuilderTest {
         val untitled = CueSheet(
             audioFileNames = listOf("disc.flac"),
             tracks = listOf(
-                CueTrack(number = 1, title = null, startMs = 0L),
-                CueTrack(number = 2, title = "Named", startMs = 60_000L),
+                CueTrack(number = 1, title = null, performer = null, startMs = 0L),
+                CueTrack(number = 2, title = "Named", performer = null, startMs = 60_000L),
             ),
         )
         val built = buildCueTracks(untitled, parent(), "/music/disc.flac")
@@ -118,7 +118,7 @@ class CueTrackBuilderTest {
     fun `a single-track sheet is not split`() {
         // One track is not a disc held in one file; there is nothing to divide, and splitting
         // would replace a working track with a copy of itself.
-        val one = CueSheet(listOf("disc.flac"), listOf(CueTrack(1, "Only", 0L)))
+        val one = CueSheet(listOf("disc.flac"), listOf(CueTrack(1, "Only", null, 0L)))
         assertThat(buildCueTracks(one, parent(), "/music/disc.flac")).isEmpty()
     }
 
@@ -127,8 +127,8 @@ class CueTrackBuilderTest {
         val unordered = CueSheet(
             audioFileNames = listOf("disc.flac"),
             tracks = listOf(
-                CueTrack(number = 2, title = "Second", startMs = 120_000L),
-                CueTrack(number = 1, title = "First", startMs = 0L),
+                CueTrack(number = 2, title = "Second", performer = null, startMs = 120_000L),
+                CueTrack(number = 1, title = "First", performer = null, startMs = 0L),
             ),
         )
         val built = buildCueTracks(unordered, parent(), "/music/disc.flac")
@@ -137,5 +137,101 @@ class CueTrackBuilderTest {
         assertThat(built.map { it.title }).containsExactly("First", "Second").inOrder()
         assertThat(built[0].startMs).isEqualTo(0L)
         assertThat(built[0].endMs).isEqualTo(120_000L)
+    }
+
+    @Test
+    fun `the sheet fills in what an untagged file left empty`() {
+        // A disc ripped to one file often has no tags at all, which is why those releases
+        // showed as "Unknown artist" - and as "Unknown album", since the album title went the
+        // same way. The sheet names both.
+        val untagged = parent().copy(
+            artist = null,
+            albumArtist = null,
+            albumTitle = null,
+            genre = null,
+            year = null,
+        )
+        val named = cue.copy(
+            albumTitle = "Agony [Japan]",
+            albumArtist = "Fleshgod Apocalypse",
+            genre = "Symphonic Technical Brutal Death Metal",
+            year = 2011,
+        )
+
+        val built = buildCueTracks(named, untagged, "/music/Agony/Agony (Japan).flac")
+
+        assertThat(built[0].albumArtist).isEqualTo("Fleshgod Apocalypse")
+        assertThat(built[0].albumTitle).isEqualTo("Agony [Japan]")
+        assertThat(built[0].artist).isEqualTo("Fleshgod Apocalypse")
+        assertThat(built[0].genre).isEqualTo("Symphonic Technical Brutal Death Metal")
+        assertThat(built[0].year).isEqualTo(2011)
+    }
+
+    @Test
+    fun `a value the file already states is not overridden by the sheet`() {
+        // Album-level fields describe the whole release, and they are what the rest of the
+        // library groups albums by, so the file wins where it states them.
+        val tagged = parent().copy(
+            albumArtist = "File Artist",
+            albumTitle = "File Album",
+            genre = "File Genre",
+            year = 1999,
+        )
+        val other = cue.copy(
+            albumTitle = "Sheet Album",
+            albumArtist = "Sheet Artist",
+            genre = "Sheet Genre",
+            year = 2011,
+        )
+
+        val built = buildCueTracks(other, tagged, "/music/Agony/Agony (Japan).flac")
+
+        assertThat(built[0].albumArtist).isEqualTo("File Artist")
+        assertThat(built[0].albumTitle).isEqualTo("File Album")
+        assertThat(built[0].genre).isEqualTo("File Genre")
+        assertThat(built[0].year).isEqualTo(1999)
+    }
+
+    @Test
+    fun `the track artist beats a file tag that covers the whole file`() {
+        // The failure this pins: a compilation's file carried one artist tag while its sheet
+        // named ten performers, and deferring to the tag made all twenty-seven tracks of
+        // Muv-Luv Vol.2 the same artist. A per-track value describes the track; a file-wide
+        // tag cannot, so the sheet's value is the one that is right.
+        val taggedFile = parent().copy(artist = "One Artist For The Whole Disc")
+        val compilation = CueSheet(
+            audioFileNames = listOf("disc.flac"),
+            tracks = listOf(
+                CueTrack(1, "First", "Mega NRG Man", 0L),
+                CueTrack(2, "Second", "Kageyama Hironobu", 60_000L),
+            ),
+            albumArtist = "Muv-Luv",
+        )
+
+        val built = buildCueTracks(compilation, taggedFile, "/music/disc.flac")
+
+        assertThat(built.map { it.artist })
+            .containsExactly("Mega NRG Man", "Kageyama Hironobu").inOrder()
+    }
+
+    @Test
+    fun `a track with no credit of its own defers to the file, then the album`() {
+        val untagged = parent().copy(artist = null, albumArtist = null)
+        val noCredits = CueSheet(
+            audioFileNames = listOf("disc.flac"),
+            tracks = listOf(
+                CueTrack(1, "A", null, 0L),
+                CueTrack(2, "B", null, 60_000L),
+            ),
+            albumArtist = "The Band",
+        )
+
+        assertThat(buildCueTracks(noCredits, untagged, "/music/disc.flac").map { it.artist })
+            .containsExactly("The Band", "The Band").inOrder()
+
+        // With a file artist present it is used ahead of the album credit.
+        val tagged = parent().copy(artist = "From File", albumArtist = null)
+        assertThat(buildCueTracks(noCredits, tagged, "/music/disc.flac").map { it.artist })
+            .containsExactly("From File", "From File").inOrder()
     }
 }

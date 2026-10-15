@@ -10,6 +10,17 @@ data class CueSheet(
     /** Names as written in the file, in order, with any directory part stripped. */
     val audioFileNames: List<String>,
     val tracks: List<CueTrack>,
+    /**
+     * The album's own lines, which for an untagged rip are the only metadata there is.
+     *
+     * Several rips here left the audio file with no tags at all - a disc ripped to one file has
+     * nowhere sensible to put a track's artist - so the sheet is what says who made it. Null
+     * when the sheet does not say, never an empty string.
+     */
+    val albumTitle: String? = null,
+    val albumArtist: String? = null,
+    val genre: String? = null,
+    val year: Int? = null,
 ) {
     /**
      * True when this CUE describes a whole disc held in one stream, which is the only case
@@ -33,6 +44,10 @@ data class CueSheet(
         private val FILE = Regex("""^\s*FILE\s+"?([^"]+?)"?\s+(WAVE|MP3|AIFF|BINARY)\s*$""", RegexOption.IGNORE_CASE)
         private val TRACK = Regex("""^\s*TRACK\s+(\d+)\s+AUDIO""", RegexOption.IGNORE_CASE)
         private val TITLE = Regex("""^\s*TITLE\s+"(.*)"\s*$""", RegexOption.IGNORE_CASE)
+        private val PERFORMER = Regex("""^\s*PERFORMER\s+"(.*)"\s*$""", RegexOption.IGNORE_CASE)
+        private val GENRE = Regex("""^\s*REM\s+GENRE\s+"(.*)"\s*$""", RegexOption.IGNORE_CASE)
+        /** `REM DATE` is written both quoted and bare; the year is the part that matters. */
+        private val DATE = Regex("""^\s*REM\s+DATE\s+"?(\d{4})"?\s*$""", RegexOption.IGNORE_CASE)
         private val INDEX = Regex("""^\s*INDEX\s+(\d+)\s+(\d+):(\d+):(\d+)\s*$""", RegexOption.IGNORE_CASE)
 
         /**
@@ -54,6 +69,15 @@ data class CueSheet(
             val tracks = mutableListOf<CueTrack>()
             var pendingTrackNumber: Int? = null
             var pendingTitle: String? = null
+            var pendingPerformer: String? = null
+            var albumTitle: String? = null
+            var albumArtist: String? = null
+            var genre: String? = null
+            var year: Int? = null
+            // TITLE and PERFORMER appear at both levels and mean different things. The album's
+            // come before any TRACK line, so a TRACK switches the reader into the track section
+            // and everything after it belongs to a track.
+            var inTrack = false
 
             for (line in text.lineSequence()) {
                 FILE.find(line)?.let { match ->
@@ -62,16 +86,33 @@ data class CueSheet(
                     // only the leaf is kept.
                     val raw = match.groupValues[1].trim()
                     fileNames += raw.substringAfterLast('\\').substringAfterLast('/')
-                    continue
+                    return@let
                 }
                 TRACK.find(line)?.let { match ->
                     pendingTrackNumber = match.groupValues[1].toIntOrNull()
                     pendingTitle = null
-                    continue
+                    pendingPerformer = null
+                    inTrack = true
+                    return@let
+                }
+                // Read before TITLE, which would otherwise swallow "REM DATE".
+                GENRE.find(line)?.let { match ->
+                    genre = match.groupValues[1].trim().takeIf { it.isNotEmpty() }
+                    return@let
+                }
+                DATE.find(line)?.let { match ->
+                    year = match.groupValues[1].toIntOrNull()?.takeIf { it in 1000..2999 }
+                    return@let
                 }
                 TITLE.find(line)?.let { match ->
-                    pendingTitle = match.groupValues[1].trim().takeIf { it.isNotEmpty() }
-                    continue
+                    val value = match.groupValues[1].trim().takeIf { it.isNotEmpty() }
+                    if (inTrack) pendingTitle = value else albumTitle = albumTitle ?: value
+                    return@let
+                }
+                PERFORMER.find(line)?.let { match ->
+                    val value = match.groupValues[1].trim().takeIf { it.isNotEmpty() }
+                    if (inTrack) pendingPerformer = value else albumArtist = albumArtist ?: value
+                    return@let
                 }
                 INDEX.find(line)?.let { match ->
                     val indexNumber = match.groupValues[1].toIntOrNull()
@@ -83,6 +124,7 @@ data class CueSheet(
                     tracks += CueTrack(
                         number = number,
                         title = pendingTitle,
+                        performer = pendingPerformer,
                         startMs = ((minutes * 60) + seconds) * 1000 + frames * 1000 / FRAMES_PER_SECOND,
                     )
                     pendingTrackNumber = null
@@ -90,7 +132,14 @@ data class CueSheet(
             }
 
             if (tracks.isEmpty() || fileNames.isEmpty()) return null
-            return CueSheet(audioFileNames = fileNames, tracks = tracks)
+            return CueSheet(
+                audioFileNames = fileNames,
+                tracks = tracks,
+                albumTitle = albumTitle,
+                albumArtist = albumArtist,
+                genre = genre,
+                year = year,
+            )
         }
     }
 }
@@ -100,9 +149,14 @@ data class CueSheet(
  *
  * [startMs] is where the track begins; where it ends is the next track's start, or the end of
  * the file for the last one, so no end is stored.
+ *
+ * [performer] is the track's own credit, which is not always the album's. Four sheets here name
+ * a different performer per track - Muv-Luv Vol.1 has nine across twenty-eight - so this is
+ * carried per track rather than assumed from the album line.
  */
 data class CueTrack(
     val number: Int,
     val title: String?,
+    val performer: String?,
     val startMs: Long,
 )

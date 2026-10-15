@@ -23,6 +23,17 @@ internal fun buildCueTracks(
     // a sheet listing tracks out of order would otherwise produce negative durations.
     val ordered = cue.tracks.sortedBy { it.startMs }
 
+    // Two different kinds of field, with opposite precedence.
+    //
+    // Album-level values come from the file first. They describe the whole release, they are
+    // what the rest of the library groups albums by, and a sheet cannot be more authoritative
+    // about a file than the file is. Several rips here have no tags at all and the sheet is
+    // the only source, so the sheet is the fallback.
+    val albumArtist = audio.albumArtist ?: cue.albumArtist
+    val albumTitle = audio.albumTitle ?: cue.albumTitle
+    val genre = audio.genre ?: cue.genre
+    val year = audio.year ?: cue.year
+
     return ordered.mapIndexed { index, track ->
         val start = track.startMs
         // The next track's start is this one's end. The last one ends where the file does,
@@ -37,8 +48,19 @@ internal fun buildCueTracks(
             // Unique per segment. The audio id is stable for the file, so pairing it with the
             // start time keeps ids stable across scans while separating the segments.
             id = "${audio.uri}#$start".hashCode().toLong(),
-            // The album title stays the album's; only the track title comes from the sheet.
             title = track.title ?: "${track.number}",
+            // The track artist is per-track data, so it takes precedence over the file rather
+            // than deferring to it. A single artist tag covers the whole file and cannot
+            // describe each track of a compilation: Muv-Luv Vol.2 carries two performers in one
+            // tag while its sheet names ten, and preferring the tag made all twenty-seven
+            // tracks the same artist. The file's value is the fallback for a sheet that does not
+            // name the track, then the album credit, which is what a single-artist release
+            // wants since its sheet repeats the same performer on every track.
+            artist = track.performer ?: audio.artist ?: albumArtist,
+            albumArtist = albumArtist,
+            albumTitle = albumTitle,
+            genre = genre,
+            year = year,
             trackNumber = track.number,
             durationMs = segmentDuration,
             startMs = start,
