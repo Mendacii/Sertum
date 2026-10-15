@@ -182,7 +182,7 @@ class LibraryScanner(
             val year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()
             val trackNumber = runCatching {
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()
-            }.getOrNull()
+            }.getOrNull() ?: trackNumberFromFileName(candidate.path)
             val mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
                 ?: "audio/*"
             val embeddedPicture = if (embeddedAttempted.add(albumKey.key)) {
@@ -223,4 +223,39 @@ class LibraryScanner(
 
     private fun fallbackTitle(candidate: ScanCandidate): String =
         candidate.path.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Unknown track" }
+}
+
+/**
+ * Leading track number in a file name, or null when the name does not carry one.
+ *
+ * Needed because tags are not always complete: 290 of 1363 tracks in the reference library
+ * have no track number in their metadata, and the album ordering falls back to sorting by
+ * title when that happens, which scrambles the running order. The file names in those
+ * folders do carry the number, so the position is recoverable without retagging anything.
+ *
+ * Accepted forms, all of which occur in real folders:
+ * `01. Title`, `01 - Title`, `01 Title`, `1 Title`, `07_Title`, `Track 05`, `0001 - Title`,
+ * and `1.01. Title`, where the leading segment is the disc.
+ *
+ * Refused, because a number alone does not make a position:
+ * - anything not followed by a separator, so `1999.mp3` and `7empest.mp3` are titles;
+ * - four or more digits, so a year or catalogue prefix like `2011 Agony.flac` is not read as
+ *   track 2011;
+ * - zero, which no track list uses as a position.
+ *
+ * Returning null is the safe outcome: the list stays alphabetical. Guessing here would
+ * invent an order rather than recover one, which is what happened when a `disc.track`
+ * prefix was read as the track and gave thirteen files the same position.
+ */
+private val DISC_DOT_TRACK_PREFIX = Regex("""^0*\d{1,2}\.(?=\d)""")
+
+private val TRACK_NUMBER_PREFIX = Regex("""^(?:track\s*)?0*([1-9]\d{0,2})(?=$|\s|[-._])""", RegexOption.IGNORE_CASE)
+
+internal fun trackNumberFromFileName(path: String): Int? {
+    val name = path.substringAfterLast('/')
+    // "1.13. Title" numbers both the disc and the track; the track is the second number, so
+    // the disc segment is dropped before the position is read. Without this, every file on a
+    // disc resolves to the same track number.
+    val stem = DISC_DOT_TRACK_PREFIX.replace(name.substringBeforeLast('.'), "")
+    return TRACK_NUMBER_PREFIX.find(stem)?.groupValues?.get(1)?.toIntOrNull()
 }
