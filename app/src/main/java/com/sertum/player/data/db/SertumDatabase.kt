@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CoverEntity::class,
         PlaybackPositionEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class SertumDatabase : RoomDatabase() {
@@ -67,6 +67,24 @@ abstract class SertumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE tracks ADD COLUMN discBand TEXT")
                 db.execSQL("ALTER TABLE albums ADD COLUMN format TEXT")
+            }
+        }
+
+        /**
+         * Adds the span a track occupies inside its file, for a single-file disc rip.
+         *
+         * Nullable and left null, which is the correct value for every existing row: an
+         * ordinary track is the whole file. The columns are populated by the next scan, which
+         * is also what creates the carved tracks in the first place - the migration cannot,
+         * because the boundaries come from reading each CUE sheet.
+         *
+         * A track with `startMs` null plays from the beginning to the end of its file, which is
+         * what every track did before this existed, so nothing changes until the scan.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN startMs INTEGER")
+                db.execSQL("ALTER TABLE tracks ADD COLUMN endMs INTEGER")
             }
         }
     }

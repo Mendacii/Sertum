@@ -19,6 +19,19 @@ data class TrackEntity(
     val discNumber: Int?,
     val trackNumber: Int?,
     /**
+     * Where this track begins and ends inside [uri], for a track carved out of a single-file
+     * disc rip. Null for an ordinary track, which is the whole file.
+     *
+     * A CUE sheet describes a disc held in one stream; the tracks in it are spans of that
+     * stream rather than files of their own. Both ends are needed because playback has to be
+     * limited to the span - see the clipping applied where a track becomes a playable item.
+     *
+     * [endMs] is null on the final track of a rip, whose end is the end of the file. Inventing
+     * one there would cut the disc short.
+     */
+    val startMs: Long?,
+    val endMs: Long?,
+    /**
      * The directory this track sits in, used as the first key when ordering an album.
      *
      * A multi-disc release normally has no disc number to read - the platform exposes a track

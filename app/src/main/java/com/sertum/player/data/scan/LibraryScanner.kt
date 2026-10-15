@@ -56,6 +56,13 @@ class LibraryScanner(
     private data class ParsedTrack(
         val track: TrackEntity,
         val folderPath: String,
+        /**
+         * The file this track came from.
+         *
+         * Kept because a track's uri is a `content://` address while a CUE sheet names a file,
+         * so the two cannot be compared directly - and CUE matching is entirely about files.
+         */
+        val sourcePath: String,
     )
 
     private data class ParseResult(
@@ -108,14 +115,20 @@ class LibraryScanner(
             }
             _progress.value = ScanProgress("parsing", candidates.size, parsed, failed)
         }
-        val tracks = parsedTracks.map { it.track }
+        // A single-file disc rip is one track at this point: the file parses as a whole. Where a
+        // CUE sheet says what is inside it, that one track is replaced by the tracks the sheet
+        // describes, so the disc becomes playable as separate tracks. Done before anything is
+        // written or grouped, so every count downstream - the album's track count, the album
+        // list - reflects the split rather than the file.
+        val expandedTracks = applyCueSheets(parsedTracks, CueSource(context))
+        val tracks = expandedTracks.map { it.track }
 
         dao.deleteTracksBySource(SourceType.MEDIA_STORE)
         dao.deleteTracksBySource(SourceType.SAF)
         tracks.forEach { dao.upsertTrack(it) }
 
         val albums = mutableListOf<AlbumEntity>()
-        for ((key, rows) in parsedTracks.groupBy { it.track.albumKey }) {
+        for ((key, rows) in expandedTracks.groupBy { it.track.albumKey }) {
             val first = rows.first()
             val folderCover = resolveFolderCover(first.folderPath)
             val embeddedPath = embeddedPaths[key]
@@ -232,6 +245,10 @@ class LibraryScanner(
                 discNumber = null,
                 trackNumber = trackNumber,
                 discBand = discBandOf(candidate.path),
+                // Both null: an ordinary track is the whole file. Only a track carved out of a
+                // single-file disc rip carries a span, and those are built after parsing.
+                startMs = null,
+                endMs = null,
                 year = year,
                 genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE),
                 durationMs = durationMs,
@@ -243,13 +260,64 @@ class LibraryScanner(
                 isPlayable = true,
             )
             ParseResult(
-                parsed = ParsedTrack(track, candidate.path.substringBeforeLast('/', "")),
+                parsed = ParsedTrack(track, candidate.path.substringBeforeLast('/', ""), candidate.path),
                 embeddedPicture = embeddedPicture,
             )
         } catch (_: Exception) {
             ParseResult(parsed = null, embeddedPicture = null)
         } finally {
             runCatching { retriever.release() }
+        }
+    }
+
+/**
+ * Replaces a single-file disc rip with the tracks a CUE sheet says it holds.
+ *
+ * Every input track comes back unchanged except the ones a CUE describes, which become the
+ * tracks inside that file.
+ *
+ * The sheet is trusted only when [matchCueAudio] finds the audio it names already in the
+ * library. That check is what stops four CUE files here from doing harm: they outlived the rips
+ * they describe, and splitting on them would create tracks pointing at files that no longer
+ * exist while hiding the per-track files that replaced them.
+ */
+    private fun applyCueSheets(
+        parsed: List<ParsedTrack>,
+        cueSource: CueSource,
+    ): List<ParsedTrack> {
+        val sheets = runCatching { cueSource.scan() }.getOrDefault(emptyMap())
+        if (sheets.isEmpty()) return parsed
+
+        // Matched by file path, not by uri. A track's uri is a content:// address while a CUE
+        // names a file, so comparing the two directly never succeeds.
+        val libraryPaths = parsed.map { it.sourcePath }.toSet()
+        // One file is one disc, so the first sheet to claim it wins. Agony ships both a
+        // ".flac.cue" and a ".wav.cue" naming the same FLAC, and they describe the same disc.
+        val claimed = mutableMapOf<String, CueSheet>()
+        for ((cuePath, sheet) in sheets) {
+            val declared = sheet.audioFileName ?: continue
+            val audioPath = matchCueAudio(cuePath, declared, libraryPaths) ?: continue
+            claimed.putIfAbsent(audioPath, sheet)
+        }
+        if (claimed.isEmpty()) return parsed
+
+        // One line per scan. This stage is silent when it does nothing and does nothing when
+        // it is wrong, so without the counts a failure here reads as "no CUE was split" with
+        // no way to tell whether the sheet was unreadable, unmatched, or simply absent.
+        android.util.Log.i(
+            "SertumCue",
+            "sheets=${sheets.size} claimed=${claimed.size} " +
+                claimed.entries.joinToString(" ") { (path, sheet) -> "${path.substringAfterLast('/')}=${sheet.tracks.size}" },
+        )
+
+        return parsed.flatMap { parsedTrack ->
+            val sheet = claimed[parsedTrack.sourcePath] ?: return@flatMap listOf(parsedTrack)
+            val carved = buildCueTracks(sheet, parsedTrack.track, parsedTrack.sourcePath)
+            if (carved.isEmpty()) {
+                listOf(parsedTrack)
+            } else {
+                carved.map { ParsedTrack(it, parsedTrack.folderPath, parsedTrack.sourcePath) }
+            }
         }
     }
 
