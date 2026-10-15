@@ -82,32 +82,16 @@ class QueueEngineTest {
         assertThat(order).containsExactlyElementsIn(ids)
         assertThat(order.size).isEqualTo(20)
     }
-}
-
-class ResumePositionStoreTest {
-
-    @Test
-    fun `in-memory store remembers and prunes positions`() = kotlinx.coroutines.runBlocking {
-        val store = InMemoryResumePositionStore()
-        store.put(1, 12_345)
-        assertThat(store.get(1)).isEqualTo(12_345)
-
-        val cutoff = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
-        // All entries are fresh, so nothing is pruned.
-        assertThat(store.pruneOlderThan(cutoff)).isEqualTo(0)
-        // A future cutoff prunes everything.
-        assertThat(store.pruneOlderThan(Long.MAX_VALUE)).isEqualTo(1)
-        assertThat(store.get(1)).isNull()
-    }
 
     @Test
     fun `seekTo synchronizes the cursor with an external selection`() {
-        val engine = QueueEngine(seed = 1L)
-        engine.setQueue(listOf(10L, 20L, 30L, 40L), startIndex = 0)
-        assertThat(engine.seekTo(30L)).isTrue()
-        assertThat(engine.currentTrackId).isEqualTo(30L)
-        assertThat(engine.next()).isEqualTo(40L)
-        assertThat(engine.seekTo(99L)).isFalse()
-        assertThat(engine.currentTrackId).isEqualTo(40L)
+        val queue = QueueEngine(seed = 1L)
+        queue.setQueue(listOf(10L, 20L, 30L, 40L), startIndex = 0)
+        assertThat(queue.seekTo(30L)).isTrue()
+        assertThat(queue.currentTrackId).isEqualTo(30L)
+        assertThat(queue.next()).isEqualTo(40L)
+        assertThat(queue.seekTo(99L)).isFalse()
+        assertThat(queue.currentTrackId).isEqualTo(40L)
     }
 }
+

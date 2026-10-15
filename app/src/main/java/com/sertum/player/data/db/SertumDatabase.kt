@@ -11,15 +11,21 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AlbumEntity::class,
         ArtistEntity::class,
         CoverEntity::class,
-        PlaybackPositionEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class SertumDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao
 
     companion object {
+        /**
+         * Kept as history rather than deleted, even though 6 -> 7 drops what it creates.
+         *
+         * A migration chain has to describe how a database got here, and an install that has not
+         * been opened since schema 1 still has to run this before it can run the rest. Removing
+         * it would break that path for no gain; the table is simply created and later dropped.
+         */
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -85,6 +91,29 @@ abstract class SertumDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE tracks ADD COLUMN startMs INTEGER")
                 db.execSQL("ALTER TABLE tracks ADD COLUMN endMs INTEGER")
+            }
+        }
+
+        /**
+         * Drops the per-track resume position, at the user's request.
+         *
+         * Resume was removed from playback on 2026-10-02 - every tap was starting mid-track
+         * after a track had been played to the end, and the request was that a tap always
+         * begins at the beginning. The store, the entity and the DAO methods were left in
+         * place at the time, so the feature kept its shape in the code and its rows in the
+         * database: 145 of them, the newest written the day it was disabled, plus the tests
+         * that kept the store green and made a removed feature look present.
+         *
+         * Dropping the table is the point of this migration rather than a side effect. The
+         * data is not recoverable and is not meant to be: it records where somebody stopped
+         * listening in a build that no longer reads it.
+         *
+         * The PlaybackPositions table has a foreign key to nothing, so no table rebuild is
+         * needed - dropping it cannot orphan a row elsewhere.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `playback_positions`")
             }
         }
     }

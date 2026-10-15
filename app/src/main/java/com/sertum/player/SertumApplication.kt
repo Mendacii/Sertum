@@ -100,6 +100,7 @@ class SertumApplication : Application() {
                 SertumDatabase.MIGRATION_3_4,
                 SertumDatabase.MIGRATION_4_5,
                 SertumDatabase.MIGRATION_5_6,
+                SertumDatabase.MIGRATION_6_7,
             )
             .build()
     }

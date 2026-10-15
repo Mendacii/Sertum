@@ -2,29 +2,37 @@
 
 # Sertum（花环播放器）
 
-Sertum 是一款完全离线、本地优先的 Android 音乐播放器，面向自己持有音乐文件库、希望经由 USB DAC 获得未经篡改的逐位精确（bit-perfect）回放的听众。
+Sertum 是一款完全离线、本地优先的 Android 音乐播放器，面向自己持有音乐文件库、希望经由 USB DAC 获得未经篡改回放的听众。
 
 ## 当前状态
 
-早期开发阶段。M0 已完成：仓库可构建出可运行的 Compose 应用骨架，并配有 CI（单元测试、lint、离线清单守卫）。尚未交付任何应用功能。迭代记录见 `CHANGELOG.md`。
+V1 功能已完整，处于稳定化阶段。十个 V1 用户故事全部实现并在基准设备上验收，目前在该设备上日常使用。
 
-## 规划的 V1 功能
+音频链路是在**真实播放路径**上审计的，不是构造的测试：独占流报告 `sharing=1`（确为独占），请求的 44100 Hz 被原样接受（`actual=44100`、`route rate in=44100 out=44100`），音乐流增益 0 dB，无设备效果挂载。**这证明的是数字通路干净，不等于端到端 bit-perfect**——增益级在 App 下游、不受其控制，且本机没有 ADC 可做回环测量。另有一条已记录但未解决的矛盾：HAL 的输出线程报 48000 Hz，而流是 44100 Hz。
+
+已知识别到的缺口记在文档仓库的 `docs/aegis/STATUS.md`，不写在这里，以免本文件从"项目说明"变成"缺陷清单"。
+
+## V1 功能
 
 - 100% 离线：无账号、无遥测、不申请网络权限
-- USB 独占 bit-perfect 输出（实现路径将由真机技术验证决定）
-- 常规 Android 输出与蓝牙作为普通播放链路
+- USB 独占输出，常规 Android 输出与蓝牙作为普通播放链路
 - 曲库扫描：系统媒体索引 + 用户自选文件夹 + 可选全盘扫描
 - 曲库视图：歌曲 / 专辑 / 艺术家，支持"艺术家 → 专辑 → 曲目"浏览
-- 无损无缝播放（Gapless）与逐曲断点续播
+- 无损曲目无缝播放（Gapless）
 - 为无内嵌封面的专辑补充封面
-- 中英双语界面；深浅主题，近纯黑 + 暖金设计令牌
-- 健壮性：DAC 热插拔、损坏文件、权限被撤销等场景的容错处理
+- 中英双语界面；深浅双主题，近纯黑 + 暖金设计令牌
+- 健壮性：DAC 热插拔、损坏文件、权限被撤销等场景
+- **整轨 rip 依旁边的 CUE 表切分为单曲**，每首只播放该文件对应的一段，整轨专辑因此可按曲目浏览与播放
+- 标签里没有曲号时从文件名恢复，多碟发行按碟排序
+- 专辑按容器格式拆分，无损发行与它的有损副本是两个条目；专辑页标明发行存为什么格式（`FLAC · 16bit / 44.1kHz`）
 
-## 规划的技术栈
+## 技术栈
 
-- Kotlin、Jetpack Compose、Media3 ExoPlayer、Room、Hilt、Coil
-- Android 10+（minSdk 29）、targetSdk 36，优先 arm64-v8a
-- 自有代码使用 Apache License 2.0
+- Kotlin、Jetpack Compose、Media3 ExoPlayer、Room、Coil
+- Android 10+（minSdk 29）、targetSdk 36、arm64-v8a
+- 自有代码采用 Apache License 2.0
+
+不使用依赖注入框架。对象图规模小，在 Application 类里直接构造比引入容器更清楚，因此从未加入。
 
 ## 仓库结构
 
@@ -34,8 +42,9 @@ Sertum 是一款完全离线、本地优先的 Android 音乐播放器，面向�
 - `.github/workflows/` — CI 流水线
 - `CHANGELOG.md` — 人类可读的迭代记录
 - `README.md` — 本文档的英文版
+- `THIRD_PARTY_LICENSES.md` — 第三方许可声明
 - `LICENSE` — Apache License 2.0
 
 ## 许可
 
-自有代码采用 Apache License 2.0 许可。第三方组件保留其各自的许可证；首个代码提交时将一并加入完整的第三方许可声明文件。
+自有代码采用 Apache License 2.0 许可。第三方组件保留各自的许可证，声明汇总在 `THIRD_PARTY_LICENSES.md`。

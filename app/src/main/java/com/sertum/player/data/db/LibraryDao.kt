@@ -103,13 +103,4 @@ interface LibraryDao {
 
     @Query("SELECT uri FROM tracks")
     suspend fun allTrackUris(): List<String>
-
-    @Query("SELECT * FROM playback_positions WHERE trackId = :trackId")
-    suspend fun resumePosition(trackId: Long): PlaybackPositionEntity?
-
-    @Upsert
-    suspend fun putResumePosition(position: PlaybackPositionEntity)
-
-    @Query("DELETE FROM playback_positions WHERE updatedAtEpochMs < :cutoffEpochMs")
-    suspend fun pruneResumePositions(cutoffEpochMs: Long): Int
 }
