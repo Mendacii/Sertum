@@ -305,10 +305,15 @@ fun SettingsScreen(initialInfoSection: String? = null) {
             text = "${stringResource(R.string.app_name)} $SERTUM_VERSION",
             style = MaterialTheme.typography.bodyLarge,
         )
+        // The two lines below the version carry the same weight and read as one block, so they
+        // are given the same gap. They did not have one: the version is bodyLarge and they are
+        // bodyMedium, so their line boxes differ, and only the diagnostics line carried a 4dp
+        // offset. The measured gaps were 29 / 15 / 25px - two of the three differed by ten.
         Text(
             text = stringResource(R.string.settings_offline),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = AboutLineGap),
         )
         val diagnostics = app.diagnosticsStore.counts
         Text(
@@ -321,7 +326,7 @@ fun SettingsScreen(initialInfoSection: String? = null) {
             ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
+            modifier = Modifier.padding(top = AboutLineGap),
         )
         SettingsTileGrid(Modifier.padding(top = 10.dp)) {
             SettingsTile(
@@ -350,6 +355,20 @@ private fun applyLocale(context: Context, option: LanguageOption) {
 
 private val ResourcesCompatSystemLocale: Locale
     get() = android.content.res.Resources.getSystem().configuration.locales.get(0) ?: Locale.getDefault()
+
+/**
+ * Gap above each of the two lines under the version in the About section.
+ *
+ * One value for both, because they are one block: same style, same colour, same weight of
+ * information. They used to differ by ten pixels - 15px then 25px measured - because the version
+ * above them is bodyLarge while they are bodyMedium, so their line boxes are not the same height,
+ * and only the second had an offset.
+ *
+ * 3.8dp is 10.45 physical pixels on the reference screen. The gap the eye reads is larger than
+ * this, because the line box leaves its own empty space below the glyphs; the measured result is
+ * 25px, which is what this number is set to produce rather than what it looks like it should be.
+ */
+private val AboutLineGap = 3.8.dp
 
 @Composable
 private fun SectionTitle(
