@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
@@ -297,7 +298,7 @@ fun SettingsScreen(initialInfoSection: String? = null) {
             )
         }
 
-        SectionTitle(stringResource(R.string.settings_about))
+        SectionTitle(stringResource(R.string.settings_about), bottomGap = AboutHeadingGap)
         // Just the version. The build fingerprint (commit + timestamp) used to be
         // appended here for M6 device verification, which made the version read as
         // a string of noise; it now travels in the diagnostics export instead.
@@ -357,6 +358,22 @@ private val ResourcesCompatSystemLocale: Locale
     get() = android.content.res.Resources.getSystem().configuration.locales.get(0) ?: Locale.getDefault()
 
 /**
+ * How far the About heading sits above the version line, instead of the section default.
+ *
+ * This is the only section whose heading is followed by plain text rather than a tile grid, so
+ * the distance can be set here without touching the other five. It is smaller than the default
+ * because the three lines under this heading read as one block, and the request was that all
+ * three gaps in it be 25px.
+ *
+ * Set through the heading rather than as an offset on the version line, because
+ * `Modifier.padding` rejects negative values: a negative top there throws
+ * `IllegalArgumentException: Padding must be non-negative` the moment the settings screen is
+ * composed, which took the tab down with it. Reducing the space above is the same 4 physical
+ * pixels of the reference screen, and legal.
+ */
+private val AboutHeadingGap = 2.55.dp
+
+/**
  * Gap above each of the two lines under the version in the About section.
  *
  * One value for both, because they are one block: same style, same colour, same weight of
@@ -376,6 +393,7 @@ private fun SectionTitle(
     options: List<OptionInfo> = emptyList(),
     initiallyOpen: Boolean = false,
     summary: String? = null,
+    bottomGap: Dp = 4.dp,
 ) {
     // The section heading and, where there is anything worth explaining, the (i)
     // button that opens those explanations. Kept as a wrapper so the screen reads the
@@ -385,7 +403,10 @@ private fun SectionTitle(
     // reference screen, which is the unit the sizes in SettingsTile.kt are written in; the gap
     // that reaches the eye also includes the empty top of the option box, so it is not this
     // number. See the spacing note in SettingsTile.kt.
-    Column(Modifier.padding(top = 14.5.dp, bottom = 4.dp)) {
+    //
+    // bottomGap is overridable for the one section whose heading is followed by text instead of
+    // a grid, where the distance is read as line spacing rather than as room above a control.
+    Column(Modifier.padding(top = 14.5.dp, bottom = bottomGap)) {
         SectionHeader(
             title = text,
             infoTitle = text,
