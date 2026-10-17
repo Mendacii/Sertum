@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.screens.settings
+package com.sertum.player.ui.screens.settings
 
 import android.content.Context
 import android.content.Intent
@@ -257,13 +257,21 @@ fun SettingsScreen(initialInfoSection: String? = null) {
             )
         }
 
-        SectionTitle(stringResource(R.string.settings_background_playback), SectionInfo.background, initiallyOpen = initialInfoSection == "background")
-        Text(
-            text = stringResource(R.string.settings_background_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SectionTitle(
+            stringResource(R.string.settings_background_playback),
+            SectionInfo.background,
+            initiallyOpen = initialInfoSection == "background",
+            // The paragraph that used to sit under this heading now lives in the (i) dialog
+            // with the rest of the help. It was the last survivor of the per-option
+            // subtitles dropped in the tile redesign, and it made this one section taller
+            // than every other for no reason a reader could see.
+            summary = stringResource(R.string.settings_info_background_summary),
         )
-        SettingsTileGrid(Modifier.padding(top = 10.dp)) {
+        // No top padding, unlike the about section further down. The 10dp here used to separate
+        // this grid from the paragraph that sat under the heading; when that paragraph moved
+        // into the (i) dialog the padding stayed behind with nothing to separate, and made this
+        // one section's heading-to-options gap ten dp wider than every other section's.
+        SettingsTileGrid {
             SettingsTile(
                 label = stringResource(R.string.settings_battery_optimization),
                 icon = Icons.Filled.BatterySaver,
@@ -348,15 +356,22 @@ private fun SectionTitle(
     text: String,
     options: List<OptionInfo> = emptyList(),
     initiallyOpen: Boolean = false,
+    summary: String? = null,
 ) {
     // The section heading and, where there is anything worth explaining, the (i)
     // button that opens those explanations. Kept as a wrapper so the screen reads the
     // same at every call site.
-    Column(Modifier.padding(top = 24.dp, bottom = 8.dp)) {
+    // Spacing is set here rather than at each call site, so the heading sits the same distance
+    // from its options in every section. 14.5dp is 40 physical pixels on the 1080x2400 / 440dpi
+    // reference screen, which is the unit the sizes in SettingsTile.kt are written in; the gap
+    // that reaches the eye also includes the empty top of the option box, so it is not this
+    // number. See the spacing note in SettingsTile.kt.
+    Column(Modifier.padding(top = 14.5.dp, bottom = 4.dp)) {
         SectionHeader(
             title = text,
             infoTitle = text,
             options = options,
+            summary = summary,
             initiallyOpen = initiallyOpen,
         )
     }

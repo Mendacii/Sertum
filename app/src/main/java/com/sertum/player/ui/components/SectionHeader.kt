@@ -123,6 +123,19 @@ fun SectionHeader(
     infoTitle: String,
     options: List<OptionInfo>,
     modifier: Modifier = Modifier,
+    /**
+     * One sentence describing what the whole section is for, shown above the per-option
+     * descriptions.
+     *
+     * The options explain themselves individually, which leaves a gap the background-playback
+     * section made visible: why the section exists at all, and what happens if it is ignored.
+     * That section used to print the answer as a paragraph under its heading - the last
+     * survivor of the per-option subtitles removed in the tile redesign, still in
+     * `bodyMedium` and `onSurfaceVariant`. It belongs here, with the rest of the help.
+     *
+     * Null for a section with nothing to add beyond its options, which is most of them.
+     */
+    summary: String? = null,
     /** Launch-only: opens this dialog immediately, for device evidence capture. */
     initiallyOpen: Boolean = false,
 ) {
@@ -179,6 +192,15 @@ fun SectionHeader(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
+                    summary?.let { text ->
+                        // Reads as an opening paragraph rather than another option, so it is
+                        // set larger than the option body and given no name line of its own.
+                        Text(
+                            text = text,
+                            fontSize = 13.sp,
+                            color = sertumBodyText,
+                        )
+                    }
                     options.forEach { option ->
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(

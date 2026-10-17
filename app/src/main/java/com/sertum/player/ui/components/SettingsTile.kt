@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.components
+package com.sertum.player.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -49,21 +49,45 @@ import com.sertum.player.ui.theme.sertumUnselectedText
  * Geometry is in **physical pixels on the 1080x2400 reference screen**, converted by
  * [px]. An earlier revision treated these numbers as dp, which multiplied everything
  * by the density factor (440/160 = 2.75).
+ *
+ * ## Spacing
+ *
+ * The three gaps the eye reads - heading to its first option, one option row to the next, and
+ * one option to the next along a row - are not set directly. Each is the sum of a declared gap
+ * and however much empty box sits around the glyphs, which is why they measured 101px, 126px
+ * and 90px when only one gap constant existed. They are aimed at 60px each.
+ *
+ *   heading to option = wrapper bottom + grid top, plus the empty half of the option box
+ *   row to row        = OptionHeight + OptionGapY, less the glyph height
+ *   option to option  = OptionGapX + the empty end of two boxes
+ *
+ * Row height came down from 120 to 75 to bring the second of those in line. It cannot go much
+ * lower: at 75 the box still clears its own 38px icon by 18px on each side, which is what keeps
+ * a row of text from reading as a row of buttons.
  */
 private const val SCREEN_DPI = 440f
 
 /** Converts a physical-pixel measurement on the reference screen into dp. */
 private fun px(value: Int): Dp = (value * 160f / SCREEN_DPI).dp
 
-/** Gap between options, both along a row and between rows. */
-private val OptionGap: Dp = px(40)
-
 /**
- * Row height for the tap target. The text is only about 40px tall, so the row is
- * given a fixed height rather than hugging its content, to keep rows from looking
- * cramped now that no surrounding box supplies vertical padding.
+ * Gap between options, split by axis.
+ *
+ * It used to be one value for both, which made the two impossible to tune separately: the
+ * vertical gap is read as the space between two rows of text, while the horizontal one is read
+ * as the space between two items along a row, and those are not the same quantity. Narrowing
+ * the single value to close up the rows also narrowed every option box, which *widened* the
+ * space between neighbouring labels - 90px to 130px - because the labels stayed the same size
+ * while the boxes shrank around them.
+ *
+ * Split so that each can be set to what it is measured to need. The horizontal value is
+ * larger because a box is shorter than it is wide, so less of it is empty at the ends; see the
+ * spacing note at the top of the file for how each gap is composed.
  */
-private val OptionHeight: Dp = px(120)
+private val OptionGapX: Dp = px(40)
+private val OptionGapY: Dp = px(20)
+
+private val OptionHeight: Dp = px(75)
 
 private val IconSize: Dp = px(38)
 private val IconLabelGap: Dp = px(12)
@@ -96,8 +120,8 @@ fun SettingsTileGrid(
 ) {
     FlowRow(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(OptionGap),
-        verticalArrangement = Arrangement.spacedBy(OptionGap),
+        horizontalArrangement = Arrangement.spacedBy(OptionGapX),
+        verticalArrangement = Arrangement.spacedBy(OptionGapY),
         itemVerticalAlignment = Alignment.CenterVertically,
         maxItemsInEachRow = maxPerRow,
     ) {

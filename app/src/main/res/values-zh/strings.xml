@@ -82,7 +82,6 @@
     <string name="settings_diagnostics_summary">诊断：%1$d 条 · %2$d 错误 · %3$d 个日志文件（滚动保留 %4$d 天）</string>
     <string name="settings_export_diagnostics">导出诊断</string>
     <string name="settings_background_playback">后台播放</string>
-    <string name="settings_background_hint">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_battery_optimization">电池优化</string>
     <string name="settings_app_details_autostart">应用详情</string>
     <!-- 分节说明弹窗：每个标题右边 (i) 里的逐项解释 -->
@@ -113,5 +112,7 @@
     <string name="settings_info_battery_desc">打开系统的电池优化白名单，避免锁屏后播放被系统中断。</string>
     <string name="settings_info_app_details">应用详情</string>
     <string name="settings_info_app_details_desc">打开 Sertum 的应用信息页。HyperOS/MIUI 上自启动开关也在这个页面里。</string>
+    <!-- 该分节是做什么用的，排在逐项解释之前。只有「选项本身说明不了用途」的分节才需要。 -->
+    <string name="settings_info_background_summary">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_info_close">关闭</string>
 </resources>

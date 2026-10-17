@@ -84,7 +84,6 @@
     <string name="settings_diagnostics_summary">Diagnostics: %1$d entries · %2$d errors · %3$d day files (rolling %4$d days)</string>
     <string name="settings_export_diagnostics">Export diagnostics</string>
     <string name="settings_background_playback">Background playback</string>
-    <string name="settings_background_hint">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_battery_optimization">Battery optimization</string>
     <string name="settings_app_details_autostart">App details</string>
     <!-- Section info dialogs: the per-option explanations behind each title's (i) -->
@@ -115,5 +114,8 @@
     <string name="settings_info_battery_desc">Opens the system battery optimization allow-list so playback is not interrupted once the screen is off.</string>
     <string name="settings_info_app_details">App details</string>
     <string name="settings_info_app_details_desc">Opens the Sertum app info page. On HyperOS and MIUI the autostart switch lives on that page too.</string>
+    <!-- What the section is for, above the per-option entries. Only sections whose options
+         do not already imply the answer need one. -->
+    <string name="settings_info_background_summary">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_info_close">Close</string>
 </resources>
