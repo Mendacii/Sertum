@@ -8,12 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,6 +32,7 @@ import com.sertum.player.audio.PlayableTrack
 import com.sertum.player.data.db.TrackEntity
 import com.sertum.player.ui.components.ALPHABET_RAIL_LETTERS
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.SearchScaffold
 import com.sertum.player.ui.components.firstLetterOf
 import com.sertum.player.ui.components.railIndexFor
 import com.sertum.player.ui.theme.WarmGold
@@ -53,14 +53,11 @@ fun SongsScreen() {
             (it.artist?.contains(query, ignoreCase = true) == true) ||
             (it.albumTitle?.contains(query, ignoreCase = true) == true)
     }
-    Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text(stringResource(R.string.search_all_placeholder)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+    SearchScaffold(
+        query = query,
+        onQueryChange = { query = it },
+        placeholder = stringResource(R.string.search_all_placeholder),
+    ) {
         val context = LocalContext.current
         val granted = hasMediaPermission(context)
         if (!granted) {
@@ -134,8 +131,38 @@ fun TrackEntity.toPlayable(): PlayableTrack = PlayableTrack(
     endMs = endMs,
 )
 
+/**
+ * One track row, shared by the songs tab and an album page.
+ *
+ * [showTrackNumber] is what differs between the two. On an album page the position is part of
+ * what the track is - it says where in that record you are - so it is shown. On the songs tab it
+ * was a number borrowed from some other list, sitting beside a title in a list sorted by title,
+ * where nothing on screen explained which ordering it came from. The album page is where a
+ * position means something (user decision, 2026-10-17).
+ *
+ * The fixed 44dp gutter goes with the number rather than staying behind: with nothing in it the
+ * title would begin one gutter further right than every other list in the app, for no reason the
+ * reader could see.
+ *
+ * ## That gutter was also a row-height floor, which is worth knowing before adding one back
+ *
+ * 44dp is 121px, and a row showing a one-line title only needs 92px for its two lines of text, so
+ * every short row was being held open to 121px - 29px of empty space per row, with the text
+ * centred in it rather than sitting at the top. Measured: a one-line row was 165px tall with the
+ * gutter and 136px without, and its text sat 15px lower. Removing the column for a layout reason
+ * therefore also tightened the list, which the user noticed and preferred (2026-10-17).
+ *
+ * So the spacing here comes from the content, not from a constant. Anything given a fixed height
+ * inside this row - a thumbnail, a badge, a taller tap target - reintroduces that floor and the
+ * gaps with it. If that becomes necessary, set the height deliberately and measure the row, rather
+ * than letting a child's intrinsic size decide it.
+ */
 @Composable
-fun TrackRow(track: TrackEntity, onClick: () -> Unit = {}) {
+fun TrackRow(
+    track: TrackEntity,
+    onClick: () -> Unit = {},
+    showTrackNumber: Boolean = false,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -143,16 +170,24 @@ fun TrackRow(track: TrackEntity, onClick: () -> Unit = {}) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(44.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = track.trackNumber?.toString() ?: "•",
-                style = MaterialTheme.typography.labelLarge,
-                color = WarmGold,
-            )
+        if (showTrackNumber) {
+            Box(
+                // Width only, deliberately. This was `size(44.dp)`, which is 121px and therefore
+                // taller than the 92px of text beside it - so it did not just reserve a column, it
+                // set a floor under the height of every row on the album page, holding each one
+                // open by 29px with the text centred in the gap. Measured before the change: 165px
+                // between track titles, against 136px on the songs tab where no such column
+                // exists. The number is centred by the row, so it does not need the height itself.
+                Modifier
+                    .width(44.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = track.trackNumber?.toString() ?: "•",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = WarmGold,
+                )
+            }
         }
         Column(Modifier.weight(1f)) {
             Text(track.title, style = MaterialTheme.typography.titleMedium)

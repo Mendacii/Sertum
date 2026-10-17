@@ -180,6 +180,8 @@ fun AlbumDetailScreen(albumKey: String) {
         itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
             TrackRow(
                 track = track,
+                // Position on the record; the songs tab leaves it out by default.
+                showTrackNumber = true,
                 onClick = {
                     val coverRef = album?.coverRef
                     app.playbackController.playTracks(

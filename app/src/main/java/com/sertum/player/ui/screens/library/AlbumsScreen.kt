@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,6 +36,7 @@ import com.sertum.player.SertumApplication
 import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.ui.components.ALPHABET_RAIL_LETTERS
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.SearchScaffold
 import com.sertum.player.ui.components.firstLetterOf
 import com.sertum.player.ui.components.railIndexFor
 import com.sertum.player.ui.theme.SurfaceBlack
@@ -80,14 +80,11 @@ fun AlbumsScreen(onAlbumClick: (String) -> Unit = {}) {
             it.title.contains(query, ignoreCase = true) || it.albumArtist.contains(query, ignoreCase = true)
         }
     }
-    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text(stringResource(R.string.search_albums_placeholder)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+    SearchScaffold(
+        query = query,
+        onQueryChange = { query = it },
+        placeholder = stringResource(R.string.search_albums_placeholder),
+    ) {
         val context = LocalContext.current
         val granted = hasMediaPermission(context)
         if (albums == null) {

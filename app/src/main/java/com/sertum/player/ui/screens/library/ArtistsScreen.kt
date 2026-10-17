@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -42,6 +41,7 @@ import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.data.db.ArtistEntity
 import com.sertum.player.data.db.hasRealCover
 import com.sertum.player.ui.components.AlphabetRail
+import com.sertum.player.ui.components.SearchScaffold
 import com.sertum.player.ui.components.startsWithNonLatin
 import com.sertum.player.ui.theme.WarmGold
 import kotlinx.coroutines.launch
@@ -85,14 +85,11 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
             }
         }
     }
-    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text(stringResource(R.string.search_artists_placeholder)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+    SearchScaffold(
+        query = query,
+        onQueryChange = { query = it },
+        placeholder = stringResource(R.string.search_artists_placeholder),
+    ) {
         val context = LocalContext.current
         val granted = hasMediaPermission(context)
         if (artists == null) {
@@ -141,6 +138,15 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
                                 text = letter,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = WarmGold,
+                                // 8dp, which lands the gaps above and below this letter on the same
+                                // 44px the rows use: 16px of the row's centred slack, plus the
+                                // row's own 6px, plus this 22px, and mirrored below.
+                                //
+                                // It was px(38) while the covers were 92px and the rows 8dp, a
+                                // combination that needed 38 to reach 44; the same 44 now arrives
+                                // from a taller cover and a smaller row padding. Worth knowing
+                                // before adjusting either: this number is the remainder, not a
+                                // value with a meaning of its own.
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
@@ -149,7 +155,16 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
                                 Modifier
                                     .fillMaxWidth()
                                     .clickable { onArtistClick(artist.name) }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    // 6px, so the row comes to the same 136px the songs and album
+                                // track rows use while still holding the full 124px cover: 124 +
+                                // 6 + 6 = 136. It was 8dp (22px), which with a 124px cover made a
+                                // 168px row - 32px taller than its neighbours, because the text is
+                                // 92px and got centred with 16px of slack above and below it.
+                                //
+                                // The gap a reader sees between two artists works out at 44px:
+                                // 16 of that slack, plus this 6, plus the next row's 6, plus its
+                                // 16. Same number as the other two lists, reached differently.
+                                .padding(horizontal = 16.dp, vertical = px(6)),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Box(Modifier.size(ArtistCoverSize), contentAlignment = Alignment.Center) {
@@ -207,15 +222,31 @@ fun ArtistsScreen(onArtistClick: (String) -> Unit = {}) {
 }
 
 /**
- * The cover square in the artist list, and the rounding the album grid uses.
+ * The cover square in the artist list.
  *
- * 45dp, which is 124px at this device's 440dpi - the album grid's tiles are 250px, so this
- * reads as the same square at list scale rather than as a new shape. The row previously
- * carried a bare 40dp letter with no container, so the row grows by 5dp and the text
- * beside it is untouched.
+ * 124px = 45dp, the size this row was reviewed at. It was briefly 92px, the height of the two
+ * lines of text beside it, which evened out the row spacing but made the artwork visibly smaller
+ * than the album page it is meant to echo (user: "the icon is too small", 2026-10-17).
+ *
+ * Both are now possible, because the row height and the cover height are separable: the row is
+ * 124px of cover plus 6px of space above and below, which is the 136px the songs and album track
+ * rows also use. Equal heights do not require equal cover sizes - only equal row *totals*.
  */
-private val ArtistCoverSize = 45.dp
-private val ArtistCoverShape = RoundedCornerShape(12.dp)
+private val ArtistCoverSize = px(124)
+
+/**
+ * Rounding for the artist cover, scaled from the album grid rather than copied from it.
+ *
+ * The album grid's tiles are 227.4px wide (1080 less the grid's 8dp start and 30dp end padding,
+ * less three 8dp gaps, over four columns) and use a 12dp = 33px radius. That is 14.51% of the
+ * tile, so the same shape at 124px is 18px.
+ *
+ * A shared 12dp was the earlier approach and is what made this row look wrong: 33px on a 124px
+ * square is 26.6% - nearly twice the album page's roundness - so the artwork read as a pill rather
+ * than as a small version of the same tile. Corner radii do not transfer between sizes; the ratio
+ * does.
+ */
+private val ArtistCoverShape = RoundedCornerShape(px(18))
 
 /**
  * Physical pixels to dp, for the sizes on this screen.
