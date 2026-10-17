@@ -1,5 +1,0 @@
-# Evidence archive (public-safe subset)
-
-Release-gating evidence is archived under dated subdirectories.
-
-Boundary: this public repository stores only **sanitized summaries** (numbers, checklists, redacted excerpts). Raw logs that may contain device identifiers, local paths, or other personal data stay in the private project workspace and are never committed here.

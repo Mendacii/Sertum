@@ -22,3 +22,13 @@ app/src/main/rust/**/target/
 # Local secrets / signing
 keystore/
 keystore.properties
+
+# Work material that is not part of the software.
+#
+# The specification, plans, baselines, decision records and evidence bundles live beside this
+# checkout and are written for whoever is working on the app, not for the people reading the
+# repository. This repository publishes the app itself: sources, build files, scripts and tests.
+# Nothing under docs/ is tracked, and this line is what keeps a future `git add` from putting it
+# back.
+docs/
+
