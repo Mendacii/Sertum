@@ -11,7 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
@@ -282,7 +283,23 @@ fun SertumApp(
                     },
                 ),
             ) {
-                Box(Modifier.fillMaxHeight(0.94f)) {
+                // A height taken from the window, not a fraction of the sheet's own constraint.
+                //
+                // `fillMaxHeight(0.94f)` was here and it never settled. The content's height
+                // depended on the maximum the sheet offered it, the sheet's height is what it
+                // measured from that content, and the offer depends on the sheet's placement -
+                // a loop whose gain is 0.94 rather than 1, so instead of converging it ran
+                // forever. Measured on the device: the content height moved between 2031 and
+                // 2047px roughly every 50-100ms, continuously, which moved the whole page with
+                // it - the reported symptom of the player jumping and never stopping after an
+                // upward swipe.
+                //
+                // With the factor at 1f the loop has a fixed point and the jump stopped, but the
+                // sheet then covered the whole screen. Taking the height from the configuration
+                // keeps the 94% inset at the top and breaks the feedback the same way, because
+                // nothing in it is read back from the sheet's own layout.
+                val sheetHeight = (LocalConfiguration.current.screenHeightDp * 0.94f).dp
+                Box(Modifier.height(sheetHeight)) {
                     NowPlayingHost(
                         showQueue = showQueue,
                         onShowQueueChange = { showQueue = it },
