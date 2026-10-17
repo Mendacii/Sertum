@@ -3,7 +3,7 @@
 # Hard rules:
 #   - No INTERNET permission, ever.
 #   - Only the PRD 7.14 minimal permission set may appear.
-#   - No MANAGE_EXTERNAL_STORAGE, no location/camera/contacts/phone/bluetooth.
+#   - No location/camera/contacts/phone/bluetooth.
 #
 # Optional device mode:
 #   ./privacy_audit.ps1 -Device
@@ -29,6 +29,19 @@ $allowed = @(
     'android.permission.POST_NOTIFICATIONS'
     'android.permission.FOREGROUND_SERVICE'
     'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
+    # PRD 7.14 lists this inside the minimal set with a qualification: "only requested when the
+    # user explicitly turns on full-disk scanning". PRD 7.6 makes the same point from the feature
+    # side - the all-files access grant is opt-in, granted by the user in system settings.
+    #
+    # The declaration is not the request. Android only lists an app under "Special app access ->
+    # All files access" if the permission is declared, so a manifest without it would leave the
+    # user with no way to authorise the scan at all. The qualification holds at runtime instead:
+    # the app opens the settings page and never asks for this grant itself.
+    #
+    # It previously sat in $forbiddenMarkers, which made this gate stricter than the PRD it
+    # implements. The contradiction went unnoticed because nothing had been pushed to main since
+    # it was introduced, so CI failed identically on every run with nobody reading it.
+    'android.permission.MANAGE_EXTERNAL_STORAGE'
 )
 
 # These two are merged in by AndroidX dependencies, not by our manifest:
@@ -41,10 +54,14 @@ $allowedApkOnly = @(
     'com.sertum.player.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
 )
 
+# Matched as substrings of the permission name, so nothing may be listed here that also appears
+# inside a permission the PRD permits. EXTERNAL_STORAGE is the sharp edge and cannot be used:
+# it is a substring of both READ_EXTERNAL_STORAGE and MANAGE_EXTERNAL_STORAGE, and the PRD allows
+# each of those. The entries below are checked against the allow list for that reason - a marker
+# that collides fails every allowed permission it appears in.
 $forbiddenMarkers = @(
     'INTERNET'
     'ACCESS_NETWORK'
-    'MANAGE_EXTERNAL_STORAGE'
     'CAMERA'
     'LOCATION'
     'CONTACTS'
