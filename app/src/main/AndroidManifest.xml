@@ -15,11 +15,10 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- PRD 7.6: opt-in full-disk scan. Declared so the app appears in
-         "Special app access -> All files access"; never auto-granted. -->
-    <uses-permission
-        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        tools:ignore="ScopedStorage" />
+    <!-- No MANAGE_EXTERNAL_STORAGE. It was declared for the opt-in full-disk scan, which walked
+         the file system recursively; that source was never wired up, and the full-scan switch now
+         gates the system media index instead (PRD 7.6, 2026-10-18). Nothing in the app reads
+         files directly, so the declaration would only be a permission the app never uses. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-feature

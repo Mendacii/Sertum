@@ -117,7 +117,15 @@ class SertumApplication : Application() {
     }
 
     val libraryScanner: LibraryScanner by lazy {
-        LibraryScanner(this, database.libraryDao(), coverStore, safDirectoryStore)
+        LibraryScanner(
+            this,
+            database.libraryDao(),
+            coverStore,
+            safDirectoryStore,
+            // The switch lives in preferences, which outlive the process; the scanner asks for it
+            // when a scan starts rather than capturing the value at construction.
+            fullScanEnabled = { preferences.fullScanEnabled.value },
+        )
     }
 
     val playerEngine: PlayerEngine by lazy { PlayerEngine(this) }

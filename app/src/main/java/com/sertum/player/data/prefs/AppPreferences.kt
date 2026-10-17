@@ -30,6 +30,10 @@ class AppPreferences(context: Context) {
         prefs.getBoolean(KEY_SCAN_ON_STARTUP, DEFAULT_SCAN_ON_STARTUP),
     )
 
+    private val _fullScanEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_FULL_SCAN_ENABLED, DEFAULT_FULL_SCAN_ENABLED),
+    )
+
     /** Cold-start library rescan. Defaults to the historical always-scan behaviour. */
     val scanOnStartup: StateFlow<Boolean> = _scanOnStartup.asStateFlow()
 
@@ -39,10 +43,34 @@ class AppPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_SCAN_ON_STARTUP, enabled).apply()
     }
 
+    /**
+     * Whether a scan may look at the whole device instead of only the chosen folders.
+     *
+     * Durable here rather than in [com.sertum.player.ui.settings.SettingsStateHolder] because the
+     * scanner needs it and is not a composable. It used to live only in that in-memory holder,
+     * which meant it reset to `false` on every launch - and nothing read it anyway, so the setting
+     * was inert in both directions. See [com.sertum.player.data.scan.LibraryScanner.scanBlocking].
+     *
+     * Off means the library comes from the folders the user added and nowhere else. That is the
+     * whole point of the switch: a reader who never grants it should never have their device
+     * indexed behind their back.
+     */
+    val fullScanEnabled: StateFlow<Boolean> = _fullScanEnabled.asStateFlow()
+
+    fun setFullScanEnabled(enabled: Boolean) {
+        if (_fullScanEnabled.value == enabled) return
+        _fullScanEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_FULL_SCAN_ENABLED, enabled).apply()
+    }
+
     companion object {
         const val DEFAULT_SCAN_ON_STARTUP = true
 
+        /** Off unless asked for: nothing is scanned before the reader says so. */
+        const val DEFAULT_FULL_SCAN_ENABLED = false
+
         internal const val KEY_SCAN_ON_STARTUP = "scan_on_startup"
+        internal const val KEY_FULL_SCAN_ENABLED = "full_scan_enabled"
 
         /** Retired key, cleared on first access so it cannot linger on disk. */
         internal const val KEY_OUTPUT_MODE_RETIRED = "output_mode"

@@ -14,6 +14,9 @@ import com.sertum.player.data.db.TrackEntity
 import com.sertum.player.domain.model.AlbumKey
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,11 +46,32 @@ data class ScanProgress(
  * MEDIA_STORE rows on each run (full rescan semantics; incremental diffing
  * stays with ScanEngine for the M3 milestone follow-up).
  */
+/**
+ * How many files are parsed at once, and how many chunks each worker gets before the results are
+ * applied and progress is posted.
+ *
+ * The work per file is a metadata read, so most of the wall time is spent waiting on the content
+ * provider - the same wait N files at a time costs roughly once. Capped by the device's core count
+ * where that is lower, so a small phone is not asked to run six provider reads at once.
+ */
+private const val PARSE_WORKERS = 6
+
+private const val PARSE_CHUNKS_PER_WORKER = 4
+
 class LibraryScanner(
     private val context: Context,
     private val dao: LibraryDao,
     private val coverStore: CoverStore,
     private val safDirectories: SafDirectoryStore,
+    /**
+     * Whether this scan may look at the whole device.
+     *
+     * A provider rather than a value: a scan can start long after the scanner was constructed, and
+     * the answer belongs to the settings screen. The default keeps the scanner usable in tests and
+     * anywhere the switch does not exist, and `false` is the safe end - only files the reader
+     * pointed at.
+     */
+    private val fullScanEnabled: () -> Boolean = { false },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -84,9 +108,29 @@ class LibraryScanner(
         // bitDepth reads from the header the retriever has already parsed, so it is expected
         // to be free; this is what says whether it is.
         val startedAt = android.os.SystemClock.elapsedRealtime()
-        val mediaCandidates = withContext(Dispatchers.IO) { MediaStoreSource(context).scan() }
+        // The whole-device source runs only when the reader has switched it on.
+        //
+        // MediaStore is the system's index of every audio file on the phone, so running it
+        // unconditionally meant a library built from the entire device no matter what the
+        // full-scan switch said - the switch was written by the settings screen and read by
+        // nothing, which made it look like a permission the app did not honour. Off now means the
+        // library comes from the chosen folders and nowhere else; with none chosen it is empty,
+        // which is what "scan nothing until I say so" has to mean.
+        val fullScan = fullScanEnabled()
+        val mediaCandidates = if (fullScan) {
+            withContext(Dispatchers.IO) { MediaStoreSource(context).scan() }
+        } else {
+            emptyList()
+        }
+        // The folder walk reports how many files it has found as it goes. Without that the reader
+        // stares at a static "正在扫描文件夹… for the whole enumeration - 21 seconds on a 1,173-file
+        // folder before the walk itself was made single-query-per-directory.
         val safCandidates = safDirectories.load().flatMap { treeUri ->
-            runCatching { SafSource().scan(context, treeUri) }.getOrDefault(emptyList())
+            runCatching {
+                SafSource().scan(context, treeUri) { found ->
+                    _progress.value = ScanProgress(phase = "collecting", candidates = found)
+                }
+            }.getOrDefault(emptyList())
         }
         val candidates = (mediaCandidates + safCandidates).distinctBy { it.uri }
         _progress.value = ScanProgress(phase = "parsing", candidates = candidates.size)
@@ -97,20 +141,35 @@ class LibraryScanner(
         // Keep at most one extracted cover per album. Storing every track's
         // embedded picture while scanning a large library exhausts the heap.
         val embeddedPaths = mutableMapOf<String, String?>()
-        val embeddedAttempted = mutableSetOf<String>()
-        for (candidate in candidates) {
-            val result = runCatching { parse(candidate, embeddedAttempted) }.getOrNull()
-            val parsedTrack = result?.parsed
-            if (parsedTrack == null) {
-                failed += 1
-            } else {
-                parsedTracks += parsedTrack
-                parsed += 1
-                val albumKey = parsedTrack.track.albumKey
-                result.embeddedPicture?.let { picture ->
-                    if (albumKey !in embeddedPaths) {
-                        embeddedPaths[albumKey] =
-                            runCatching { coverStore.saveEmbedded(albumKey, picture) }.getOrNull()
+        // Concurrent, because the parse loop now runs several files at a time: this is what
+        // decides which track of an album pays for the embedded picture.
+        val embeddedAttempted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        // Parsing is one metadata read per file, and most of that is waiting on the content
+        // provider rather than using the CPU - so the wait is overlapped instead of paid once per
+        // file. Measured on a 1,173-file SAF folder: 34.8s one file at a time.
+        val workers = PARSE_WORKERS.coerceAtMost(Runtime.getRuntime().availableProcessors())
+        candidates.chunked(workers * PARSE_CHUNKS_PER_WORKER).forEach { chunk ->
+            val results = coroutineScope {
+                chunk.map { candidate ->
+                    async(Dispatchers.IO) { runCatching { parse(candidate, embeddedAttempted) }.getOrNull() }
+                }.awaitAll()
+            }
+            // Applied here, in chunk order, on this coroutine: the tracks keep the order the
+            // sources produced and the album grouping downstream stays deterministic. Cover files
+            // are written here too, so writes stay single-threaded.
+            results.forEach { result ->
+                val parsedTrack = result?.parsed
+                if (parsedTrack == null) {
+                    failed += 1
+                } else {
+                    parsedTracks += parsedTrack
+                    parsed += 1
+                    val albumKey = parsedTrack.track.albumKey
+                    result.embeddedPicture?.let { picture ->
+                        if (albumKey !in embeddedPaths) {
+                            embeddedPaths[albumKey] =
+                                runCatching { coverStore.saveEmbedded(albumKey, picture) }.getOrNull()
+                        }
                     }
                 }
             }
@@ -198,7 +257,7 @@ class LibraryScanner(
         val finishedAt = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i(
             "SertumScanTiming",
-            "candidates=${candidates.size} parsed=$parsed failed=$failed " +
+            "fullScan=$fullScan candidates=${candidates.size} parsed=$parsed failed=$failed " +
                 "enumerateMs=${parseStartedAt - startedAt} parseMs=${finishedAt - parseStartedAt} " +
                 "totalMs=${finishedAt - startedAt}",
         )

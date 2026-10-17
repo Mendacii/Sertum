@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
-import android.os.Environment
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,6 +102,7 @@ fun SettingsScreen(initialInfoSection: String? = null) {
         // Durable in AppPreferences, not SettingsStateHolder: Application.onCreate
         // reads it before any UI exists.
         val scanOnStartup by app.preferences.scanOnStartup.collectAsState()
+        val fullScanEnabled by app.preferences.fullScanEnabled.collectAsState()
         SettingsTileGrid {
             SettingsTile(
                 label = stringResource(R.string.settings_scan_on_startup_short),
@@ -115,21 +115,12 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 label = stringResource(R.string.settings_full_scan_short),
                 icon = Icons.Filled.FolderOpen,
                 emphasis = TileEmphasis.TOGGLE,
-                selected = state.fullScanEnabled,
-                onClick = {
-                    val enabling = !state.fullScanEnabled
-                    val isManager = android.os.Build.VERSION.SDK_INT >= 30 &&
-                        Environment.isExternalStorageManager()
-                    if (enabling && !isManager) {
-                        context.startActivity(
-                            Intent(
-                                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                Uri.parse("package:" + context.packageName),
-                            ),
-                        )
-                    }
-                    SettingsStateHolder.update { it.copy(fullScanEnabled = enabling) }
-                },
+                selected = fullScanEnabled,
+                // No system permission page any more. This switch no longer walks the file system,
+                // so it does not need MANAGE_EXTERNAL_STORAGE - it turns the system media index on
+                // or off for the scan. Asking for "all files access" and then never using it was
+                // the old behaviour, and it is what made the switch look like it did nothing.
+                onClick = { app.preferences.setFullScanEnabled(!fullScanEnabled) },
             )
             SettingsTile(
                 label = stringResource(R.string.settings_add_folder_short),
@@ -177,7 +168,13 @@ fun SettingsScreen(initialInfoSection: String? = null) {
         if (scanProgress.phase == "collecting" || scanProgress.phase == "parsing") {
             Text(
                 text = if (scanProgress.phase == "collecting") {
-                    stringResource(R.string.settings_scan_collecting)
+                    // The count only exists once the walk has found something; before the first
+                    // report there is nothing to say beyond "scanning".
+                    if (scanProgress.candidates > 0) {
+                        stringResource(R.string.settings_scan_collecting_count, scanProgress.candidates)
+                    } else {
+                        stringResource(R.string.settings_scan_collecting)
+                    }
                 } else {
                     stringResource(
                         R.string.settings_scan_progress,

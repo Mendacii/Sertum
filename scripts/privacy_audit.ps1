@@ -29,19 +29,11 @@ $allowed = @(
     'android.permission.POST_NOTIFICATIONS'
     'android.permission.FOREGROUND_SERVICE'
     'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
-    # PRD 7.14 lists this inside the minimal set with a qualification: "only requested when the
-    # user explicitly turns on full-disk scanning". PRD 7.6 makes the same point from the feature
-    # side - the all-files access grant is opt-in, granted by the user in system settings.
-    #
-    # The declaration is not the request. Android only lists an app under "Special app access ->
-    # All files access" if the permission is declared, so a manifest without it would leave the
-    # user with no way to authorise the scan at all. The qualification holds at runtime instead:
-    # the app opens the settings page and never asks for this grant itself.
-    #
-    # It previously sat in $forbiddenMarkers, which made this gate stricter than the PRD it
-    # implements. The contradiction went unnoticed because nothing had been pushed to main since
-    # it was introduced, so CI failed identically on every run with nobody reading it.
-    'android.permission.MANAGE_EXTERNAL_STORAGE'
+    # MANAGE_EXTERNAL_STORAGE used to be listed here, with the argument that declaring it is not
+    # the same as requesting it. That argument held while the optional full-disk scan existed.
+    # The scan no longer walks the file system - the switch now gates the system media index - so
+    # nothing reads files directly and the declaration was removed. It is a forbidden marker below
+    # now, so reintroducing it fails this gate instead of passing silently.
 )
 
 # These two are merged in by AndroidX dependencies, not by our manifest:
@@ -56,11 +48,12 @@ $allowedApkOnly = @(
 
 # Matched as substrings of the permission name, so nothing may be listed here that also appears
 # inside a permission the PRD permits. EXTERNAL_STORAGE is the sharp edge and cannot be used:
-# it is a substring of both READ_EXTERNAL_STORAGE and MANAGE_EXTERNAL_STORAGE, and the PRD allows
-# each of those. The entries below are checked against the allow list for that reason - a marker
-# that collides fails every allowed permission it appears in.
+# it is a substring of READ_EXTERNAL_STORAGE, which the PRD permits. The full name is safe - it is
+# not a substring of anything allowed. The entries below are checked against the allow list for
+# that reason - a marker that collides fails every allowed permission it appears in.
 $forbiddenMarkers = @(
     'INTERNET'
+    'MANAGE_EXTERNAL_STORAGE'
     'ACCESS_NETWORK'
     'CAMERA'
     'LOCATION'

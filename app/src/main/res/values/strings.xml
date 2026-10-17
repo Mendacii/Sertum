@@ -15,7 +15,7 @@
 
     <!-- Empty library / permissions -->
     <string name="no_items_yet">No %1$s yet</string>
-    <string name="empty_library_hint">Grant media access or scan folders from Settings.</string>
+    <string name="empty_library_hint">In Settings, grant media access, add folders, or turn on Full scan to index the whole device.</string>
     <string name="open_app_settings">Open app settings</string>
     <string name="unknown_artist">Unknown artist</string>
 
@@ -63,6 +63,7 @@
     <string name="settings_output_auto_short">Standard</string>
     <string name="settings_remove_folder">Remove</string>
     <string name="settings_scan_collecting">Scanning folders…</string>
+    <string name="settings_scan_collecting_count">Scanning folders: %1$d found…</string>
     <string name="settings_scan_progress">Scanning: %1$d tracks found, %2$d parsed, %3$d failed</string>
     <string name="settings_rescan">Rescan library</string>
     <!-- Artist list artwork -->
@@ -90,7 +91,7 @@
     <string name="settings_info_scan_on_startup">Scan at start</string>
     <string name="settings_info_scan_on_startup_desc">Rescans the library every time the app starts. When off, scanning happens only on a manual rescan or after adding a folder.</string>
     <string name="settings_info_full_scan">Full scan</string>
-    <string name="settings_info_full_scan_desc">Scans audio files across the whole device, including ones outside your music folders. Needs the All files access permission. Off by default.</string>
+    <string name="settings_info_full_scan_desc">Scans every audio file the system has indexed, not only the folders you added. Off means only the folders you add are scanned, and no folder means an empty library. Off by default.</string>
     <string name="settings_info_add_folder">Add folder</string>
     <string name="settings_info_add_folder_desc">Pick a music folder and grant lasting read access. Added folders are listed below and can be removed one by one.</string>
     <string name="settings_info_rescan">Rescan</string>

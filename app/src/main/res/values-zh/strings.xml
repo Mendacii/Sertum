@@ -15,7 +15,7 @@
 
     <!-- 空态与权限 -->
     <string name="no_items_yet">还没有%1$s</string>
-    <string name="empty_library_hint">请在设置中授权媒体访问或添加音乐文件夹。</string>
+    <string name="empty_library_hint">在设置中授权媒体访问、添加文件夹，或开启「全盘扫描」索引整台设备。</string>
     <string name="open_app_settings">打开应用设置</string>
     <string name="unknown_artist">未知艺术家</string>
 
@@ -61,6 +61,7 @@
     <string name="settings_output_auto_short">自动/常规</string>
     <string name="settings_remove_folder">移除</string>
     <string name="settings_scan_collecting">正在扫描文件夹…</string>
+    <string name="settings_scan_collecting_count">正在扫描文件夹：已发现 %1$d 首…</string>
     <string name="settings_scan_progress">扫描中：发现 %1$d 首，已解析 %2$d，失败 %3$d</string>
     <string name="settings_rescan">重新扫描曲库</string>
     <!-- 艺术家列表配图 -->
@@ -88,7 +89,7 @@
     <string name="settings_info_scan_on_startup">启动时扫描</string>
     <string name="settings_info_scan_on_startup_desc">每次启动 App 都重新扫描曲库。关掉后只在手动扫描或添加目录后扫描。</string>
     <string name="settings_info_full_scan">全盘扫描</string>
-    <string name="settings_info_full_scan_desc">扫描整个设备的音频文件，包括不在音乐文件夹里的。需要授予「所有文件访问」权限。默认关闭。</string>
+    <string name="settings_info_full_scan_desc">扫描系统已索引的全部音频，而不只是你添加的文件夹。关闭时只扫描已添加的文件夹，没有添加文件夹则不入库。默认关闭。</string>
     <string name="settings_info_add_folder">添加文件夹</string>
     <string name="settings_info_add_folder_desc">选择一个音乐文件夹，授予长期读取权限。已添加的目录会列在下方，可以逐个移除。</string>
     <string name="settings_info_rescan">重新扫描</string>
