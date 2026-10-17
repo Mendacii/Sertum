@@ -11,8 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.height
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
@@ -22,16 +21,13 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,6 +56,7 @@ import com.sertum.player.ui.navigation.SertumDestinations
 import com.sertum.player.ui.screens.library.AlbumDetailScreen
 import com.sertum.player.ui.screens.library.ArtistDetailScreen
 import com.sertum.player.ui.screens.nowplaying.MiniPlayer
+import com.sertum.player.ui.screens.nowplaying.PlayerSheet
 import com.sertum.player.ui.screens.nowplaying.NowPlayingHost
 import com.sertum.player.ui.theme.SertumTheme
 
@@ -79,7 +76,7 @@ private val topLevel = listOf(
  * Shared timing for the bottom chrome and the content inset it reserves, so
  * the two stop moving on the same frame instead of one outrunning the other.
  */
-private const val BOTTOM_CHROME_ANIM_MS = 120
+private const val BOTTOM_CHROME_ANIM_MS = 100
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -268,43 +265,19 @@ fun SertumApp(
         }
 
         if (showNowPlaying) {
-            ModalBottomSheet(
+            // Presented by our own PlayerSheet instead of Material's. The sheet's dismissal could
+            // not be given a duration - it settles a drag with a velocity spring, measured at
+            // 1048ms against 502ms for a back gesture - and since the bottom chrome sits behind it,
+            // that difference was the difference in when the bar came back. Owning the transition
+            // makes every exit the same fixed slide. See PlayerSheet for the measurements.
+            PlayerSheet(
+                showQueue = showQueue,
                 onDismissRequest = { showNowPlaying = false },
-                // Material's default sheet colour is the baseline light
-                // `surfaceContainerLow`, not the theme background, so the whole
-                // player read as grey on a black page (user feedback 2026-10-02).
-                containerColor = MaterialTheme.colorScheme.background,
-                sheetState = rememberModalBottomSheetState(
-                    skipPartiallyExpanded = true,
-                    confirmValueChange = { target ->
-                        // Dragging the queue layer down must close only the
-                        // queue layer, never the whole player sheet.
-                        if (showQueue && target == SheetValue.Hidden) false else true
-                    },
-                ),
             ) {
-                // A height taken from the window, not a fraction of the sheet's own constraint.
-                //
-                // `fillMaxHeight(0.94f)` was here and it never settled. The content's height
-                // depended on the maximum the sheet offered it, the sheet's height is what it
-                // measured from that content, and the offer depends on the sheet's placement -
-                // a loop whose gain is 0.94 rather than 1, so instead of converging it ran
-                // forever. Measured on the device: the content height moved between 2031 and
-                // 2047px roughly every 50-100ms, continuously, which moved the whole page with
-                // it - the reported symptom of the player jumping and never stopping after an
-                // upward swipe.
-                //
-                // With the factor at 1f the loop has a fixed point and the jump stopped, but the
-                // sheet then covered the whole screen. Taking the height from the configuration
-                // keeps the 94% inset at the top and breaks the feedback the same way, because
-                // nothing in it is read back from the sheet's own layout.
-                val sheetHeight = (LocalConfiguration.current.screenHeightDp * 0.94f).dp
-                Box(Modifier.height(sheetHeight)) {
-                    NowPlayingHost(
-                        showQueue = showQueue,
-                        onShowQueueChange = { showQueue = it },
-                    )
-                }
+                NowPlayingHost(
+                    showQueue = showQueue,
+                    onShowQueueChange = { showQueue = it },
+                )
             }
         }
     }
