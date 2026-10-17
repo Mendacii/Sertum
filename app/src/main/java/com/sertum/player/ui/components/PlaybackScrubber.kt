@@ -1,7 +1,8 @@
 package com.sertum.player.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,8 +37,12 @@ private val ScrubberThumbSize = 12.dp
  * 2026-10-02). The thumb is a dot, but the gesture target stays 48dp tall so
  * the control remains reachable.
  *
- * [progress] is a 0..1 fraction of the track; [onProgressChange] streams drag
- * updates and [onProgressChangeFinished] commits the final position.
+ * Both a tap and a drag set the position. A tap on the track seeks straight to that point; a
+ * press that then moves follows the finger as before. The whole 48dp band is the target, so the
+ * two do not need separate affordances.
+ *
+ * [progress] is a 0..1 fraction of the track; [onProgressChange] streams updates while the
+ * position is being set and [onProgressChangeFinished] commits it once, however the gesture ended.
  */
 @Composable
 fun PlaybackScrubber(
@@ -75,19 +80,44 @@ fun PlaybackScrubber(
                 .pointerInput(trackWidth, layoutDirection) {
                     if (trackWidth.value <= 0f) return@pointerInput
                     val widthPx = trackWidth.toPx()
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            committed = fractionAt(offset.x, widthPx, layoutDirection)
-                            onProgressChange(committed)
-                        },
-                        onDrag = { change, _ ->
-                            change.consume()
-                            committed = fractionAt(change.position.x, widthPx, layoutDirection)
-                            onProgressChange(committed)
-                        },
-                        onDragEnd = { onProgressChangeFinished(committed) },
-                        onDragCancel = { onProgressChangeFinished(committed) },
-                    )
+                    // One handler for both gestures, rather than detectDragGestures.
+                    //
+                    // detectDragGestures waits for touch slop before it reports anything, so a
+                    // tap - press and release in the same place - produced no callback at all and
+                    // the position could only be changed by dragging. On a 48dp control that
+                    // reads as broken: tapping the far end of the track looks like it should seek
+                    // there (user report, 2026-10-17).
+                    //
+                    // Handling the press directly also fixes the ordering: the seek is known at
+                    // press time, so the thumb follows the finger from the first frame instead of
+                    // jumping once the slop threshold is crossed.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var latest = fractionAt(down.position.x, widthPx, layoutDirection)
+                        committed = latest
+                        onProgressChange(latest)
+
+                        var dragging = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            if (!dragging &&
+                                (change.position - down.position).getDistance() > viewConfiguration.touchSlop
+                            ) {
+                                dragging = true
+                            }
+                            if (dragging) {
+                                change.consume()
+                                latest = fractionAt(change.position.x, widthPx, layoutDirection)
+                                committed = latest
+                                onProgressChange(latest)
+                            }
+                        }
+                        // Runs for a tap too, which is what commits the position: the settled
+                        // fraction goes out exactly once however the gesture ended.
+                        onProgressChangeFinished(committed)
+                    }
                 },
         )
 
