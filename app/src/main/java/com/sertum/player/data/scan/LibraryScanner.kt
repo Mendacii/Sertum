@@ -7,6 +7,7 @@ import com.sertum.player.data.covers.CoverResolver
 import com.sertum.player.data.covers.CoverStore
 import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.data.db.ArtistEntity
+import com.sertum.player.data.db.CoverEntity
 import com.sertum.player.data.db.LibraryDao
 import com.sertum.player.data.db.SourceType
 import com.sertum.player.data.db.TrackEntity
@@ -132,7 +133,31 @@ class LibraryScanner(
             val first = rows.first()
             val folderCover = resolveFolderCover(first.folderPath)
             val embeddedPath = embeddedPaths[key]
-            val userCover = dao.coverForAlbum(key)?.userCoverPath
+            // The file decides, not the covers row. The row records that the user picked a cover
+            // for this album; the file is what carries it, and its name comes from the album key,
+            // which changes when tags or the key rules do. Asking the row alone meant a key
+            // change silently dropped the cover from the album even though the image was still
+            // on disk - nine albums lost theirs that way when the format joined the key.
+            val chosen = dao.coverForAlbum(key)?.userCoverPath
+            val inherited = coverStore.hasOnlyFallbackCover(key)
+            val onDisk = coverStore.userCoverFor(key)
+            val userCover = onDisk ?: chosen?.takeIf { File(it).exists() }
+            // A cover found under an older key is copied to the name this key expects, and the
+            // row is written back, so the next scan finds it directly and the user's choice is
+            // not forgotten by the following key change.
+            if (inherited) {
+                runCatching {
+                    if (coverStore.adoptFallback(key)) {
+                        dao.insertCover(
+                            CoverEntity(key, coverStore.fileFor(key).absolutePath, System.currentTimeMillis()),
+                        )
+                    }
+                }
+            } else if (userCover != null && chosen == null) {
+                runCatching {
+                    dao.insertCover(CoverEntity(key, userCover, System.currentTimeMillis()))
+                }
+            }
             val resolved = CoverResolver.resolve(userCover, embeddedPath, folderCover).reference
             albums += AlbumEntity(
                 albumKey = key,

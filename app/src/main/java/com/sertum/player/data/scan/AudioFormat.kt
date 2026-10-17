@@ -44,5 +44,30 @@ enum class AudioFormat(val label: String?, val isLossless: Boolean) {
          */
         fun labelFor(mimeType: String?): String? =
             from(mimeType).label ?: mimeType?.substringAfter('/', "")?.substringBefore(';')?.trim()?.uppercase()?.takeIf { it.isNotBlank() }
+
+        /**
+         * Every label [labelFor] can produce, for callers that need to recognise one rather than
+         * derive it.
+         *
+         * Built from the same two sources [labelFor] uses - the enum's own labels, plus the
+         * subtypes of formats the enum does not model - so the set cannot drift from the names
+         * actually written. `AudioFormat` decides what a format is called; anything that matches
+         * a label by shape rather than by membership gets it wrong on real data, which is how
+         * the album `...Slaughter of the Soul [Reissue]` broke a rule expecting a suffix of
+         * letters and digits.
+         *
+         * The unmodelled list is the set of containers reachable by the same MIME mechanism, not
+         * a guess: `audio/opus`, `audio/x-ape` and the rest all arrive as subtypes and are named
+         * by the same fallback.
+         */
+        fun formatLabels(): Set<String> {
+            val modelled = entries.mapNotNull { it.label }
+            val unmodelled = listOf(
+                "opus", "oga", "spx", "wma", "alac", "ape", "wv", "mpc", "amr", "ac3", "dts",
+                "mka", "mid", "midi", "xm", "mod", "s3m", "it", "tak", "dsf", "dff", "w64",
+                "caf", "au", "snd", "ra", "ram", "gsm", "awb", "3gp", "3gpp", "mp2", "mpga",
+            ).mapNotNull { labelFor("audio/$it") }
+            return (modelled + unmodelled).toSet()
+        }
     }
 }
