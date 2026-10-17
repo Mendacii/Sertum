@@ -6,27 +6,29 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -34,7 +36,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
+import com.sertum.player.ui.components.ThinChevronDown
+import com.sertum.player.ui.components.ThinChevronUp
 import com.sertum.player.ui.playback.PlaybackStateHolder
+import com.sertum.player.ui.theme.sertumUnselectedIcon
+import com.sertum.player.ui.theme.sertumUnselectedText
 
 /**
  * Queue management layer. When hosted inside the full player it slides up
@@ -75,9 +81,7 @@ fun QueueScreen(onBack: (() -> Unit)? = null) {
                 modifier = Modifier.weight(1f),
             )
             if (state.queue.isNotEmpty()) {
-                OutlinedButton(onClick = { controller.clearQueue() }) {
-                    Text(stringResource(R.string.clear_queue))
-                }
+                ClearQueueAction(onClick = { controller.clearQueue() })
             }
         }
 
@@ -118,20 +122,55 @@ fun QueueScreen(onBack: (() -> Unit)? = null) {
                         onClick = { controller.moveQueueItem(index, index - 1) },
                         enabled = index > 0,
                     ) {
-                        Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.cd_move_up))
+                        Icon(ThinChevronUp, contentDescription = stringResource(R.string.cd_move_up))
                     }
                     IconButton(
                         onClick = { controller.moveQueueItem(index, index + 1) },
                         enabled = index < state.queue.lastIndex,
                     ) {
-                        Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.cd_move_down))
+                        Icon(ThinChevronDown, contentDescription = stringResource(R.string.cd_move_down))
                     }
                     IconButton(onClick = { controller.removeQueueItem(index) }) {
-                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_remove))
+                        Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.cd_remove))
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Clearing the queue, as a plain row rather than the outlined pill it was.
+ *
+ * The pill was the last bordered control in the app - the settings page, the search bar and the
+ * queue rows are all borderless with colour carrying state - so it read as a leftover. This is the
+ * settings tile's shape instead: a muted icon and its label, nothing drawn around them.
+ *
+ * The icon sits to the left of the label, and its weight is deliberately below the gold row
+ * numbers: clearing the queue is destructive, but it is not the screen's primary action and should
+ * not out-shout the list it acts on.
+ */
+@Composable
+private fun ClearQueueAction(onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Delete,
+            contentDescription = null,
+            tint = sertumUnselectedIcon,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.clear_queue),
+            style = MaterialTheme.typography.labelLarge,
+            color = sertumUnselectedText,
+        )
     }
 }
 

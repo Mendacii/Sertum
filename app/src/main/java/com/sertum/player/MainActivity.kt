@@ -56,6 +56,15 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN_PLAYER = "player"
 
         /**
+         * Opens the queue layer on launch, e.g. `--es player 1 --es queue 1`.
+         *
+         * The queue is one tap deeper than the player - a button inside the player sheet - and
+         * injected input cannot tap it on the reference device, so its controls could not be
+         * looked at at all. Same reason as [EXTRA_OPEN_PLAYER], one layer down.
+         */
+        const val EXTRA_OPEN_QUEUE = "queue"
+
+        /**
          * Forces a theme for the launch, e.g. `--es theme light`, so the light scheme
          * can be inspected on device. The theme is in-memory state that defaults to
          * dark, and injected input cannot tap the theme option, so this was the only
@@ -121,6 +130,8 @@ class MainActivity : ComponentActivity() {
                     initialTab = requestedTab,
                     openPlayer = savedInstanceState == null &&
                         intent?.getStringExtra(EXTRA_OPEN_PLAYER) == "1",
+                    openQueue = savedInstanceState == null &&
+                        intent?.getStringExtra(EXTRA_OPEN_QUEUE) == "1",
                     initialAlbumKey = if (savedInstanceState != null) {
                         null
                     } else {

@@ -98,13 +98,22 @@ fun SertumApp(
      * not be inspected at all.
      */
     openPlayer: Boolean = false,
+    /**
+     * Launch-only: opens the queue layer. Meaningful together with [openPlayer], since the queue
+     * slides over the player.
+     *
+     * The queue is one tap deeper than the player, behind a button in the player sheet, and taps
+     * cannot be injected on the reference device - so its row controls could not be inspected
+     * without this.
+     */
+    openQueue: Boolean = false,
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab ?: 0) }
     var showNowPlaying by rememberSaveable { mutableStateOf(openPlayer) }
-    var showQueue by rememberSaveable { mutableStateOf(false) }
+    var showQueue by rememberSaveable { mutableStateOf(openQueue) }
     val settings by com.sertum.player.ui.settings.SettingsStateHolder.state.collectAsState()
     val context = LocalContext.current
     val controller = (context.applicationContext as SertumApplication).playbackController
