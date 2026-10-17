@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,7 +55,6 @@ import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.playback.PlaybackStateHolder
 import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.ui.theme.SurfaceBlack
-import com.sertum.player.ui.theme.WarmGold
 
 /**
  * Full player. The cover stays in the upper area; title, progress and
@@ -101,11 +99,6 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
     }
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         val coverRef = state.coverRef?.takeUnless { it == CoverResolver.PLACEHOLDER_REF }
-        // The artwork is inset by the ring's width when round, so the ring sits outside it
-        // rather than on top of it. `border` paints inwards from the edge, so an
-        // equal-sized ring would cover the outermost pixels of the cover instead of
-        // outlining it.
-        val coverInset = if (settings.roundCover) COVER_EDGE_WIDTH else 0.dp
         Box(
             Modifier
                 .fillMaxWidth()
@@ -121,7 +114,6 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(coverInset)
                         .clip(if (settings.roundCover) CircleShape else RoundedCornerShape(16.dp))
                         .then(
                             if (settings.roundCover) {
@@ -141,13 +133,6 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                     } else {
                         Modifier
                     },
-                )
-            }
-            if (settings.roundCover) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .border(COVER_EDGE_WIDTH, WarmGold, CircleShape),
                 )
             }
         }
@@ -213,8 +198,8 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
             Text(
                 text = buildString {
                     if (state.sampleRate > 0) append("${state.sampleRate / 1000f} kHz")
-                    if (state.bitDepth > 0) append(" 路 ${state.bitDepth} bit")
-                    append(" 路 ")
+                    if (state.bitDepth > 0) append(" · ${state.bitDepth} bit")
+                    append(" · ")
                     append(
                         when (state.outputMode) {
                             OutputMode.USB_EXCLUSIVE -> stringResource(R.string.output_usb_exclusive)
@@ -328,11 +313,3 @@ internal object CoverRotation {
     var angle: Float = 0f
 }
 
-/**
- * Width of the ring around the round cover.
- *
- * Physical pixels, like the other measured values: 2px at this display's 440dpi is 0.727dp,
- * half the 4dp it replaces. It is opaque [WarmGold] now rather than the 40%-opacity
- * WarmGoldDim it was, so the edge reads as a drawn line instead of a haze.
- */
-private val COVER_EDGE_WIDTH = (2 * 160f / 440f).dp

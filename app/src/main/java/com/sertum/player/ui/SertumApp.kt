@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -29,6 +30,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -157,29 +159,41 @@ fun SertumApp(
                 ) {
                     Column {
                         MiniPlayer(onExpand = { showNowPlaying = true })
-                        NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                            topLevel.forEachIndexed { index, dest ->
-                                NavigationBarItem(
-                                    selected = selectedTab == index,
-                                    onClick = {
-                                        selectedTab = index
-                                        if (currentRoute != SertumDestinations.MAIN) {
-                                            navController.navigate(SertumDestinations.MAIN) {
-                                                popUpTo(SertumDestinations.MAIN) { inclusive = false }
-                                                launchSingleTop = true
+                        // No ripple on the tabs.
+                        //
+                        // Clearing `indicatorColor` removed the resting capsule but not the one
+                        // that blooms under a finger: NavigationBarItem calls `ripple()` itself
+                        // rather than reading LocalIndication, so overriding the indication has no
+                        // effect on it. `LocalRippleConfiguration provides null` is the switch
+                        // Material provides for exactly this, and it is scoped to the bar so the
+                        // rest of the app keeps its press feedback.
+                        CompositionLocalProvider(LocalRippleConfiguration provides null) {
+                            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                                topLevel.forEachIndexed { index, dest ->
+                                    NavigationBarItem(
+                                        selected = selectedTab == index,
+                                        onClick = {
+                                            selectedTab = index
+                                            if (currentRoute != SertumDestinations.MAIN) {
+                                                navController.navigate(SertumDestinations.MAIN) {
+                                                    popUpTo(SertumDestinations.MAIN) { inclusive = false }
+                                                    launchSingleTop = true
+                                                }
                                             }
-                                        }
-                                    },
-                                    icon = dest.icon,
-                                    label = { Text(stringResource(dest.labelRes)) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = com.sertum.player.ui.theme.WarmGold,
-                                        selectedTextColor = com.sertum.player.ui.theme.WarmGold,
-                                        indicatorColor = com.sertum.player.ui.theme.WarmGoldDim,
-                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    ),
-                                )
+                                        },
+                                        icon = dest.icon,
+                                        label = { Text(stringResource(dest.labelRes)) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = com.sertum.player.ui.theme.WarmGold,
+                                            selectedTextColor = com.sertum.player.ui.theme.WarmGold,
+                                            // No pill behind the selected tab either. The gold icon
+                                            // and label are the only indication of where you are.
+                                            indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
