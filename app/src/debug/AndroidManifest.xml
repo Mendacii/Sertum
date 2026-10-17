@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only entry points.
+
+  These are harnesses for features the app actually ships: one drives the exclusive AAudio backend
+  across a rate/depth matrix and reports passed/8, the other plays a three-item queue through the
+  real player chain and logs every transition to check gapless playback. They are how those claims
+  are re-checked on a device, and they are launched over adb, which is why they are exported.
+
+  They live in the debug source set so that a release build contains neither the classes nor the
+  entry points. Before this they sat in `main` and shipped: five activities, all exported, none
+  reachable from the UI - including two spike probes whose conclusions were already archived. A
+  release build has no reason to carry code that a stranger's app can start.
+
+  The spike probes were removed rather than moved: their evidence is archived, and they answered
+  questions (can the system path be bypassed, can a USB DAC be claimed) that the shipped code no
+  longer asks.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <activity
+            android:name=".audio.backend.BackendSmokeActivity"
+            android:exported="true" />
+
+        <activity
+            android:name=".audio.GaplessSmokeActivity"
+            android:exported="true" />
+
+    </application>
+
+</manifest>

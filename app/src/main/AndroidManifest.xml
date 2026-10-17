@@ -43,25 +43,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Ships inside media3-session and would otherwise be the only exported activity in the
+             app besides MainActivity. It is the library's Bluetooth-session validation screen,
+             which nothing here starts; removing it keeps "what can another app launch in this
+             app" down to the launcher. Same merge-time removal already used for
+             ACCESS_NETWORK_STATE above. -->
         <activity
-            android:name=".spike1.Spike1Activity"
-            android:exported="true" />
-
-        <activity
-            android:name=".spike1.Spike1NativeActivity"
-            android:exported="true" />
-
-        <activity
-            android:name=".spike2.Spike2Activity"
-            android:exported="true" />
-
-        <activity
-            android:name=".audio.backend.BackendSmokeActivity"
-            android:exported="true" />
-
-        <activity
-            android:name=".audio.GaplessSmokeActivity"
-            android:exported="true" />
+            android:name="androidx.media3.session.BluetoothValidationActivity"
+            tools:node="remove" />
 
         <service
             android:name=".audio.session.PlaybackService"

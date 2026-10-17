@@ -1,9 +1,9 @@
 package com.sertum.player.audio.backend
 
-/** JNI bridge for the production AAudio backend (libsertumspike). */
+/** JNI bridge for the production AAudio backend (libsertumaaudio). */
 object AaudioNative {
     init {
-        System.loadLibrary("sertumspike")
+        System.loadLibrary("sertumaaudio")
     }
 
     external fun nativeOpen(sampleRate: Int, channels: Int, bits: Int): Long

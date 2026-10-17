@@ -10,7 +10,7 @@ Feature-complete for V1, in stabilisation. All ten V1 user stories are implement
 
 The audio chain was audited on a real playback path rather than a constructed one: the exclusive stream reports `sharing=1` (genuinely exclusive), the requested 44100 Hz is accepted unchanged (`actual=44100`, `route rate in=44100 out=44100`), music-stream gain is 0 dB and no device effects are attached. **That demonstrates a clean digital path; it does not prove end-to-end bit-perfect playback**, because gain stages downstream of the app remain outside its control and there is no ADC here for a loopback measurement. One contradiction is recorded and unresolved: the HAL's output thread reports 48000 Hz while the stream is 44100 Hz.
 
-Known gaps are listed in `docs/aegis/STATUS.md` of the documentation repository rather than here, so this file stays a description of the project and not a bug list.
+Known gaps are tracked outside this repository, together with the design notes they belong to, so this file stays a description of the project and not a bug list.
 
 ## V1 features
 
