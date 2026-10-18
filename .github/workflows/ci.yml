@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# The job pins ubuntu-latest, but every PowerShell step declares `shell: pwsh`
+# explicitly: pwsh is not the default shell on Ubuntu. A Windows runner keeps the
+# same PowerShell steps working, and would only need the Gradle steps changed from
+# `./gradlew` to `shell: pwsh` + `.\gradlew.bat`.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +39,7 @@ jobs:
       - name: Unit tests and core coverage gate
         run: ./gradlew testDebugUnitTest jacocoTestReport jacocoCoverageVerification
 
-      - name: Lint
+      - name: Lint (debug)
         run: ./gradlew lintDebug
 
       - name: Assemble debug APK
@@ -44,3 +48,24 @@ jobs:
       - name: Merged APK permission audit
         shell: pwsh
         run: ./scripts/privacy_audit.ps1 -Apk app/build/outputs/apk/debug/app-debug.apk -Aapt "$env:ANDROID_HOME/build-tools/36.0.0/aapt"
+
+      # Release-path coverage. There is no signingConfig, so assembleRelease emits
+      # app-release-unsigned.apk. That is enough to prove the release variant
+      # compiles and its manifest/resources merge; it is not a shippable artifact.
+      - name: Assemble release APK (unsigned)
+        run: ./gradlew assembleRelease
+
+      - name: Lint (release)
+        run: ./gradlew lintRelease
+
+      # aapt can read the manifest out of an unsigned APK, so the release manifest
+      # is audited as well. The debug audit above is kept because the two manifests
+      # do not always merge identically.
+      - name: Merged release APK permission audit
+        shell: pwsh
+        run: ./scripts/privacy_audit.ps1 -Apk app/build/outputs/apk/release/app-release-unsigned.apk -Aapt "$env:ANDROID_HOME/build-tools/36.0.0/aapt"
+
+      # Instrumentation tests need a device, so CI only compiles them: a broken
+      # androidTest source set fails here instead of on release day.
+      - name: Assemble instrumentation test APK
+        run: ./gradlew assembleDebugAndroidTest
