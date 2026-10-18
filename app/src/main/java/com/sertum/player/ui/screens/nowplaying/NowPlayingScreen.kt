@@ -54,7 +54,7 @@ import com.sertum.player.ui.components.formatDuration
 import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.playback.PlaybackStateHolder
 import com.sertum.player.ui.settings.SettingsStateHolder
-import com.sertum.player.ui.theme.SurfaceBlack
+import com.sertum.player.ui.theme.sertumCoverBackdrop
 
 /**
  * Full player. The cover stays in the upper area; title, progress and
@@ -104,7 +104,7 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(if (settings.roundCover) CircleShape else RoundedCornerShape(16.dp))
-                .background(SurfaceBlack, MaterialTheme.shapes.large),
+                .background(sertumCoverBackdrop, MaterialTheme.shapes.large),
             contentAlignment = Alignment.Center,
         ) {
             if (coverRef != null) {

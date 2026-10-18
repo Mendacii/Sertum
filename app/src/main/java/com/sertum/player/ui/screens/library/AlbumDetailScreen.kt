@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.HideImage
 import androidx.compose.material.icons.filled.PlayArrow
@@ -35,8 +36,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -49,13 +52,14 @@ import com.sertum.player.data.covers.CoverResolver
 import com.sertum.player.data.db.CoverEntity
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
+import com.sertum.player.ui.components.BackButton
 import com.sertum.player.ui.theme.sertumMutedText
-import com.sertum.player.ui.theme.SurfaceBlack
+import com.sertum.player.ui.theme.sertumCoverBackdrop
 import com.sertum.player.ui.theme.WarmGold
 import kotlinx.coroutines.launch
 
 @Composable
-fun AlbumDetailScreen(albumKey: String) {
+fun AlbumDetailScreen(albumKey: String, onBack: () -> Unit = {}) {
     val context = LocalContext.current
     val app = context.applicationContext as SertumApplication
     val dao = app.database.libraryDao()
@@ -80,6 +84,12 @@ fun AlbumDetailScreen(albumKey: String) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
+            // A way out that does not require knowing the system back gesture. Both this page and
+            // the artist page had none: they are destinations reached from a grid, and the only
+            // exit was the system back gesture, which leaves no visible affordance on screen.
+            //
+            // 16dp is this page's content edge, so the arrow lines up with the cover beneath it.
+            BackButton(onClick = onBack, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
             Row(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -87,7 +97,12 @@ fun AlbumDetailScreen(albumKey: String) {
                 Box(
                     Modifier
                         .size(96.dp)
-                        .background(SurfaceBlack, MaterialTheme.shapes.medium),
+                        // The album grid's corner, in proportion rather than in dp: its tiles are
+                        // 227.375px wide with a 12dp (33px) radius, which is 14.51%. A 96dp (264px)
+                        // cover carrying the same 12dp would read as a much sharper corner at this
+                        // size, so it gets 14dp (38.5px) - 14.58% - and the two look alike.
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(sertumCoverBackdrop, RoundedCornerShape(14.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     val coverRef = album?.coverRef?.takeUnless {
@@ -97,7 +112,17 @@ fun AlbumDetailScreen(albumKey: String) {
                         AsyncImage(
                             model = coverRef,
                             contentDescription = null,
+                            // Fill the square, as the album grid does, instead of fitting inside it.
+                            //
+                            // The default is Fit, which leaves the whole image visible - correct for
+                            // the square artwork most albums carry, and wrong for a cover that is not
+                            // square. One reader's own choice was 427x480 (0.89), so it was drawn
+                            // 235x264 inside a 264x264 box: 15px of background down each side, which
+                            // reads as the artwork having been trimmed left and right rather than as
+                            // margins. Filling the frame makes every cover occupy the same square,
+                            // and the square ones are unchanged because there is nothing to crop.
                             modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
                         )
                     } else {
                         Text(

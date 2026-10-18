@@ -39,7 +39,7 @@ import com.sertum.player.ui.components.AlphabetRail
 import com.sertum.player.ui.components.SearchScaffold
 import com.sertum.player.ui.components.firstLetterOf
 import com.sertum.player.ui.components.railIndexFor
-import com.sertum.player.ui.theme.SurfaceBlack
+import com.sertum.player.ui.theme.sertumCoverBackdrop
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 
@@ -149,7 +149,7 @@ fun AlbumCard(album: AlbumEntity, onClick: () -> Unit = {}) {
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(12.dp))
-                .background(SurfaceBlack, MaterialTheme.shapes.medium),
+                .background(sertumCoverBackdrop, MaterialTheme.shapes.medium),
             contentAlignment = Alignment.Center,
         ) {
             val coverRef = album.coverRef?.takeUnless { it == com.sertum.player.data.covers.CoverResolver.PLACEHOLDER_REF }

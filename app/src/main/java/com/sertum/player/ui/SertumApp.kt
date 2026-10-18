@@ -264,6 +264,10 @@ fun SertumApp(
                 ) { entry ->
                     AlbumDetailScreen(
                         albumKey = entry.arguments?.getString("albumKey")?.let(android.net.Uri::decode).orEmpty(),
+                        // popBackStack rather than navigate: both detail pages are pushed on top of
+                        // the tab they were opened from, so going back must return to that tab and
+                        // not add another entry.
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(
@@ -273,6 +277,7 @@ fun SertumApp(
                     ArtistDetailScreen(
                         artistName = entry.arguments?.getString("artistName")?.let(android.net.Uri::decode).orEmpty(),
                         onAlbumClick = { key -> navController.navigate(SertumDestinations.albumDetail(key)) },
+                        onBack = { navController.popBackStack() },
                     )
                 }
             }

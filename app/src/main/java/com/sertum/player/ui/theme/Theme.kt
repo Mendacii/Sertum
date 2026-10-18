@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.theme
+package com.sertum.player.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +43,7 @@ private val DarkScheme = darkColorScheme(
     // `darkColorScheme()` does not populate them, and any role left unset
     // falls back to the baseline purple-grey palette - which is what made
     // sheets and bars read as "grey" against a near-black page.
-    surfaceVariant = PureBlack,
+    surfaceVariant = SurfaceBlack,
     onSurfaceVariant = TextSecondary,
     surfaceContainerLowest = PureBlack,
     surfaceContainerLow = PureBlack,
@@ -116,6 +116,19 @@ val sertumUnselectedIcon: Color
 
 val sertumMutedText: Color
     @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+/**
+ * The block drawn behind album and artist artwork, and standing in for it when there is none.
+ *
+ * A cover slot has to read as an object on the page, so in the dark theme it sits one step off the
+ * pure-black background; in the light theme it is the paper tone the artist page already used. This
+ * is a role, not a colour: the album grid, the album detail header and the player all drawing the
+ * dark-theme constant `SurfaceBlack` is why a cover-less album was a black square on the light
+ * theme's paper page, while the artist page - the one place already reading a scheme role - looked
+ * right in both.
+ */
+val sertumCoverBackdrop: Color
+    @Composable get() = MaterialTheme.colorScheme.surfaceVariant
 
 
 

@@ -40,6 +40,7 @@
     <string name="cd_toggle_cover_shape">Toggle cover shape</string>
     <string name="now_playing_cover_square">Square cover</string>
     <string name="now_playing_cover_round">Rotating round cover</string>
+    <string name="cd_back">Back</string>
     <string name="cd_back_to_player">Back to player</string>
     <string name="cd_move_up">Move up</string>
     <string name="cd_move_down">Move down</string>

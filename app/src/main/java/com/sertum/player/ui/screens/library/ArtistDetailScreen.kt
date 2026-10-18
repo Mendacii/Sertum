@@ -1,4 +1,4 @@
-﻿package com.sertum.player.ui.screens.library
+package com.sertum.player.ui.screens.library
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -43,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.sertum.player.R
+import com.sertum.player.ui.components.BackButton
+import com.sertum.player.ui.theme.sertumCoverBackdrop
 import com.sertum.player.SertumApplication
 import com.sertum.player.data.db.AlbumEntity
 import com.sertum.player.data.db.hasRealCover
@@ -52,7 +55,11 @@ import kotlinx.coroutines.launch
 
 /** Artist -> albums in a 4-column grid (PRD US-4: the HiBy gap is fixed here). */
 @Composable
-fun ArtistDetailScreen(artistName: String, onAlbumClick: (String) -> Unit = {}) {
+fun ArtistDetailScreen(
+    artistName: String,
+    onAlbumClick: (String) -> Unit = {},
+    onBack: () -> Unit = {},
+) {
     val context = LocalContext.current
     val dao = (context.applicationContext as SertumApplication).database.libraryDao()
     val albums by dao.albumsForArtist(artistName).collectAsState(initial = emptyList())
@@ -78,12 +85,21 @@ fun ArtistDetailScreen(artistName: String, onAlbumClick: (String) -> Unit = {}) 
         )
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(4),
-        modifier = Modifier.fillMaxSize().padding(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    Column(Modifier.fillMaxSize()) {
+        // Outside the grid on purpose. As a grid item the arrow inherited the grid's own 8dp
+        // content padding and sat at x=66, while the artist's name below it starts at x=22 - the
+        // reader saw it as "not against the left edge". The shared BackButton puts the glyph on the
+        // edge it is given, so 8dp here lines it up with that name.
+        BackButton(
+            onClick = onBack,
+            modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+        )
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 Text(
@@ -106,8 +122,9 @@ fun ArtistDetailScreen(artistName: String, onAlbumClick: (String) -> Unit = {}) 
                 }
             }
         }
-        items(albums, key = { it.albumKey }) { album: AlbumEntity ->
-            AlbumCard(album, onClick = { onAlbumClick(album.albumKey) })
+            items(albums, key = { it.albumKey }) { album: AlbumEntity ->
+                AlbumCard(album, onClick = { onAlbumClick(album.albumKey) })
+            }
         }
     }
 }
@@ -167,7 +184,7 @@ private fun ArtistImagePicker(
                             Modifier
                                 .size(64.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .background(sertumCoverBackdrop)
                                 .then(
                                     if (selected) {
                                         Modifier.border(2.dp, WarmGold, RoundedCornerShape(10.dp))
