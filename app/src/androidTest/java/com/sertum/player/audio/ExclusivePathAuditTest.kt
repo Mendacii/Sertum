@@ -134,7 +134,15 @@ class ExclusivePathAuditTest {
         }
 
         val dir = context.getExternalFilesDir(null) ?: context.filesDir
-        File(dir, "exclusive-path-audit.json").writeText(report.toString(2))
+        File(dir, REPORT_NAME).writeText(report.toString(2))
+        // Also beside the app's own files, because the external directory cannot be read back:
+        // `adb exec-out run-as <pkg> cat /sdcard/Android/data/<pkg>/...` is denied, so a report
+        // written only there exists and is unreachable. This copy is what `run-as` can read.
+        runCatching { File(context.filesDir, REPORT_NAME).writeText(report.toString(2)) }
+        // And into the runner's additional-output directory when it offers one, so the report comes
+        // back with the test results on the host instead of needing a device-side read at all.
+        InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+            ?.let { runCatching { File(it).mkdirs(); File(it, REPORT_NAME).writeText(report.toString(2)) } }
 
         output.release()
 
@@ -142,5 +150,9 @@ class ExclusivePathAuditTest {
         assertThat(tappedBytes).isEqualTo(submittedBytes)
         assertThat(info.sharingMode).isEqualTo(1)
         assertThat(info.actualRate).isEqualTo(sampleRate)
+    }
+
+    private companion object {
+        const val REPORT_NAME = "exclusive-path-audit.json"
     }
 }
