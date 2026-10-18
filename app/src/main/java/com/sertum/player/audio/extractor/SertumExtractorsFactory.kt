@@ -17,10 +17,21 @@ class SertumExtractorsFactory(
 ) : ExtractorsFactory {
 
     override fun createExtractors(): Array<Extractor> =
-        arrayOf(AiffExtractor(), *delegate.createExtractors())
+        withAiffFirst(delegate.createExtractors())
 
     override fun createExtractors(
         uri: Uri,
         responseHeaders: Map<String, List<String>>,
-    ): Array<Extractor> = arrayOf(AiffExtractor(), *delegate.createExtractors(uri, responseHeaders))
+    ): Array<Extractor> = withAiffFirst(delegate.createExtractors(uri, responseHeaders))
+
+    /**
+     * AIFF in front of everything else.
+     *
+     * The order is the whole point of this class: Media3 asks each extractor in turn whether it
+     * recognises the input, and none of the standard ones recognises AIFF, so a file only plays
+     * because ours is asked first. Extracted so the ordering can be tested without a Media3 source
+     * or a Uri - the two overrides above then differ only in which delegate call they wrap.
+     */
+    internal fun withAiffFirst(base: Array<Extractor>): Array<Extractor> =
+        arrayOf(AiffExtractor(), *base)
 }

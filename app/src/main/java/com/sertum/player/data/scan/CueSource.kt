@@ -11,26 +11,18 @@ import java.io.File
  * which matters because walking storage is exactly what scoped storage removed. Their content
  * is then read from the path MediaStore reports.
  *
- * A sheet that cannot be read is skipped rather than failing the scan: a CUE is an optional
- * companion to the audio, and losing one costs a split that could not be made, while failing
- * would cost the whole library.
+ * This class is the platform shell around [CueSheetLoader], which holds the decisions: a sheet
+ * that cannot be read is skipped rather than failing the scan, and one describing a per-track rip
+ * is dropped because it needs no splitting.
  */
 class CueSource(private val context: Context) {
 
-    /** Every readable CUE sheet, as path to content. */
-    fun scan(): Map<String, CueSheet> {
-        val paths = cuePaths()
-        if (paths.isEmpty()) return emptyMap()
-        val result = mutableMapOf<String, CueSheet>()
-        for (path in paths) {
-            val bytes = runCatching { File(path).readBytes() }.getOrNull() ?: continue
-            val sheet = CueSheet.parse(bytes) ?: continue
-            // A per-track rip needs no splitting, so there is no reason to carry it further.
-            if (!sheet.isSingleFileDisc) continue
-            result[path] = sheet
-        }
-        return result
+    private val loader = CueSheetLoader { path ->
+        runCatching { File(path).readBytes() }.getOrNull()
     }
+
+    /** Every readable CUE sheet that describes a disc needing a split, as path to content. */
+    fun scan(): Map<String, CueSheet> = loader.load(cuePaths())
 
     private fun cuePaths(): List<String> {
         val projection = arrayOf(MediaStore.Files.FileColumns.DATA)
