@@ -49,8 +49,85 @@ class AiffExtractorTest {
         assertThat(output.format!!.channelCount).isEqualTo(2)
         assertThat(output.format!!.pcmEncoding).isEqualTo(C.ENCODING_PCM_16BIT)
         assertThat(output.seekMap).isNotNull()
-        assertThat(output.seekMap!!.isSeekable).isFalse()
+        assertThat(output.seekMap!!.isSeekable).isTrue()
         assertThat(output.data.toByteArray()).isEqualTo(toLittleEndian16(data))
+    }
+
+    @Test
+    fun `seek map converts a time to a sample byte offset`() {
+        val frames = 1000
+        val aiff = buildAiff(44100, 2, 16, frames, ByteArray(frames * 4))
+        val output = parseToEnd(aiff)
+
+        val map = output.seekMap!!
+        // Duration comes from the COMM frame count: 1000 frames at 44100Hz.
+        assertThat(map.durationUs).isEqualTo(22_675L)
+
+        // Sample data begins after FORM(12) + COMM(26) + SSND header(16) = 54, and a frame is
+        // 2 channels x 2 bytes. 10000us is 441 frames in.
+        assertThat(map.getSeekPoints(10_000).first.position).isEqualTo(54L + 441L * 4L)
+        assertThat(map.getSeekPoints(10_000).first.timeUs).isEqualTo(10_000L)
+        // Past the end clamps to the last byte rather than seeking outside the file.
+        assertThat(map.getSeekPoints(10_000_000).first.position).isEqualTo(54L + 4_000L)
+    }
+
+    @Test
+    fun `seeking repositions the frame count and the remaining data`() {
+        val frames = 1000
+        val data = ByteArray(frames * 4)
+        val aiff = buildAiff(44100, 2, 16, frames, data)
+        val input = FakeExtractorInput(aiff)
+        val output = FakeExtractorOutput()
+        val extractor = AiffExtractor()
+        extractor.init(output)
+
+        // One chunk per read: header, COMM, SSND. After these the sample data is located.
+        repeat(3) { extractor.read(input, PositionHolder()) }
+        assertThat(input.position).isEqualTo(54L)
+
+        // Seek to frame 500; the caller moves the input, the extractor keeps the bookkeeping.
+        extractor.seek(54L + 500L * 4L, 500L * 1_000_000L / 44_100L)
+        input.setRetryPosition(54L + 500L * 4L, RuntimeException("test reposition"))
+        val result = extractor.read(input, PositionHolder())
+
+        assertThat(result).isEqualTo(Extractor.RESULT_END_OF_INPUT)
+        // 500 of the 1000 frames remain, so half the sample bytes and one timestamp at the end.
+        assertThat(output.data.size()).isEqualTo(2_000)
+        assertThat(output.lastMetadataTimeUs).isEqualTo(22_675L)
+    }
+
+    @Test
+    fun `seeking before the sample data is located changes nothing`() {
+        val frames = 1000
+        val data = ByteArray(frames * 4)
+        val aiff = buildAiff(44100, 2, 16, frames, data)
+        val input = FakeExtractorInput(aiff)
+        val output = FakeExtractorOutput()
+        val extractor = AiffExtractor()
+        extractor.init(output)
+
+        extractor.seek(1_000L, 5_000L)
+
+        var result = Extractor.RESULT_CONTINUE
+        var guard = 0
+        while (result == Extractor.RESULT_CONTINUE && guard++ < 1000) {
+            result = extractor.read(input, PositionHolder())
+        }
+        assertThat(result).isEqualTo(Extractor.RESULT_END_OF_INPUT)
+        assertThat(output.data.size()).isEqualTo(frames * 4)
+    }
+
+    private fun parseToEnd(aiff: ByteArray): FakeExtractorOutput {
+        val input = FakeExtractorInput(aiff)
+        val output = FakeExtractorOutput()
+        val extractor = AiffExtractor()
+        extractor.init(output)
+        var result = Extractor.RESULT_CONTINUE
+        var guard = 0
+        while (result == Extractor.RESULT_CONTINUE && guard++ < 1000) {
+            result = extractor.read(input, PositionHolder())
+        }
+        return output
     }
 
     @Test
@@ -235,6 +312,7 @@ class AiffExtractorTest {
     private class FakeExtractorOutput : ExtractorOutput {
         var format: Format? = null
         var seekMap: SeekMap? = null
+        var lastMetadataTimeUs = -1L
         val data = ByteArrayOutputStream()
 
         override fun track(id: Int, type: Int): TrackOutput = object : TrackOutput {
@@ -261,7 +339,9 @@ class AiffExtractorTest {
                 size: Int,
                 offset: Int,
                 cryptoData: TrackOutput.CryptoData?,
-            ) = Unit
+            ) {
+                this@FakeExtractorOutput.lastMetadataTimeUs = timeUs
+            }
         }
 
         override fun endTracks() = Unit

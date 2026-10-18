@@ -10,6 +10,7 @@ import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
+import androidx.media3.extractor.SeekPoint
 import androidx.media3.extractor.TrackOutput
 import android.util.Log
 import java.io.EOFException
@@ -18,8 +19,8 @@ import java.io.EOFException
  * Minimal AIFF/AIFC PCM extractor for Media3.
  *
  * Supports FORM AIFF/AIFC containers with COMM + SSND chunks, 16/24/32-bit
- * big-endian PCM. Seeking is not implemented for the M2 slice (Unseekable);
- * the player can still decode and play the stream.
+ * big-endian PCM. Seeking is arithmetic rather than an index: the frames are fixed width, so
+ * a time maps straight to a byte offset and back.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class AiffExtractor : Extractor {
@@ -56,6 +57,17 @@ class AiffExtractor : Extractor {
     private var dataBytesRemaining = 0L
     private var framesFed = 0L
     private var sampleRate = 1
+
+    /**
+     * Where the sample data starts, and how long it is.
+     *
+     * -1 until the SSND chunk has been located. These exist for seeking: uncompressed PCM has a
+     * fixed frame size, so time and byte offset convert by multiplying, and both directions need
+     * to know where the bytes begin.
+     */
+    private var dataStartPosition = -1L
+    private var dataTotalBytes = 0L
+    private var durationUs = 0L
 
     override fun sniff(input: ExtractorInput): Boolean {
         val result = sniffFormat(input)
@@ -119,7 +131,11 @@ class AiffExtractor : Extractor {
                     )
                 }
                 val durationUs = frameCount * 1_000_000L / sampleRate
-                out.seekMap(SeekMap.Unseekable(durationUs))
+                this.durationUs = durationUs
+                // Seekable, because AIFF is uncompressed PCM at a fixed frame size: the position
+                // for any time is one multiplication. The previous answer here - Unseekable - was
+                // a scope cut, and it cost the reader the progress bar on every AIFF file.
+                out.seekMap(LinearPcmSeekMap())
                 out.endTracks()
             }
 
@@ -127,6 +143,9 @@ class AiffExtractor : Extractor {
                 val ssnd = ByteArray(8)
                 if (!input.readFully(ssnd, 0, 8, false)) return Extractor.RESULT_END_OF_INPUT
                 dataBytesRemaining = chunkSize - 8L
+                dataTotalBytes = dataBytesRemaining
+                // After the chunk header and its offset/block-size fields: the first sample.
+                dataStartPosition = input.position
                 state = STATE_DATA
                 Log.i(TAG, "SSND dataBytesRemaining=$dataBytesRemaining frameBytes=$frameBytes bps=$bytesPerSample rate=$sampleRate")
             }
@@ -217,8 +236,58 @@ class AiffExtractor : Extractor {
         }
     }
 
+    /**
+     * Repositions the bookkeeping to [position].
+     *
+     * The caller opens the source at the new position, so nothing here moves the input; what has to
+     * happen is that the frame count and the remaining byte count continue from the right place.
+     * Skipping that is what makes timestamps wrong by the amount sought past, and makes the tail of
+     * the file play with the wrong duration.
+     */
     override fun seek(position: Long, timeUs: Long) {
-        // Unseekable for the M2 slice.
+        if (dataStartPosition < 0 || frameBytes <= 0) return
+        val dataEnd = dataStartPosition + dataTotalBytes
+        val target = (if (position < 0) positionForTimeUs(timeUs) else position)
+            .coerceIn(dataStartPosition, dataEnd)
+        val framesBefore = (target - dataStartPosition) / frameBytes
+        framesFed = framesBefore
+        dataBytesRemaining = dataTotalBytes - framesBefore * frameBytes
+    }
+
+    /** Byte offset of [timeUs] into the sample data, clamped to what the file holds. */
+    private fun positionForTimeUs(timeUs: Long): Long {
+        if (dataStartPosition < 0 || frameBytes <= 0) return 0L
+        val dataEnd = dataStartPosition + dataTotalBytes
+        // At or past the end: the end of the data, exactly. Converting through durationUs instead
+        // loses the last frame, because the COMM frame count does not divide into whole
+        // microseconds.
+        if (timeUs >= durationUs) return dataEnd
+        val frames = timeUs.coerceAtLeast(0L) * sampleRate / 1_000_000L
+        return (dataStartPosition + frames * frameBytes).coerceAtMost(dataEnd)
+    }
+
+    /**
+     * Time to byte offset, linearly.
+     *
+     * AIFF carries uncompressed PCM, so every frame is the same width and the mapping is exact -
+     * this is the format's own structure, not an estimate. Resolves through the extractor's fields
+     * because the map is installed when COMM is read and the sample data has not been located yet.
+     */
+    private inner class LinearPcmSeekMap : SeekMap {
+        override fun isSeekable(): Boolean = true
+
+        // Qualified deliberately: inside a SeekMap, the bare name resolves to this class's own
+        // getDurationUs(), which would call itself.
+        override fun getDurationUs(): Long = this@AiffExtractor.durationUs
+
+        override fun getSeekPoints(timeUs: Long): SeekMap.SeekPoints = SeekMap.SeekPoints(
+            // SeekPoint takes (timeUs, position) - the opposite of the order it declares them in
+            // the field list, which is an easy way to hand the player a time where it wants a byte.
+            SeekPoint(
+                timeUs.coerceIn(0L, this@AiffExtractor.durationUs),
+                positionForTimeUs(timeUs),
+            ),
+        )
     }
 
     override fun release() {
