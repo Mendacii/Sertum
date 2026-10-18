@@ -47,6 +47,10 @@ class RoutedAudioOutputProvider(context: Context) :
     @Volatile
     private var pendingSourceBitDepth = 24
 
+    /** Depth to pack at for the output being configured; set by [getOutputConfig]. */
+    @Volatile
+    private var pendingOutputBitDepth = 24
+
     /**
      * Mime type of the last non-raw source seen by [getFormatSupport].
      * Media3 forces decoded output to float when the sink directly supports
@@ -89,16 +93,28 @@ class RoutedAudioOutputProvider(context: Context) :
     ): androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport {
         if (!isExclusiveRoute()) return super.getFormatSupport(formatConfig)
         val pcmEncoding = formatConfig.format.pcmEncoding
-        // Recorded for every format, raw PCM included: what the route can deliver is 24-bit at
-        // most, and a 32-bit source is packed down rather than passed through.
-        when (pcmEncoding) {
-            C.ENCODING_PCM_16BIT -> pendingSourceBitDepth = 16
-            C.ENCODING_PCM_24BIT -> pendingSourceBitDepth = 24
-            C.ENCODING_PCM_32BIT -> pendingSourceBitDepth = 32
-        }
+        // Only the container/codec format describes the source. Media3 also probes *candidate
+        // output* formats here - `audio/raw` at 16-bit among them - and letting those write this
+        // field made a 24-bit source pack down to 16 bits, which is exactly the fidelity the
+        // exclusive path exists to keep.
         if (formatConfig.format.sampleMimeType != MimeTypes.AUDIO_RAW) {
             pendingSourceMimeType = formatConfig.format.sampleMimeType
+            pendingSourceBitDepth = when (pcmEncoding) {
+                C.ENCODING_PCM_16BIT -> 16
+                C.ENCODING_PCM_24BIT -> 24
+                C.ENCODING_PCM_32BIT -> 32
+                else -> pendingSourceBitDepth
+            }
         }
+        // A 32-bit PCM stream is offered as raw too, and that probe is skipped above; catching it
+        // here keeps the depth honest for raw 32-bit without letting 16-bit probes lower the source.
+        if (pcmEncoding == C.ENCODING_PCM_32BIT) pendingSourceBitDepth = 32
+        android.util.Log.d(
+            "SertumRoute",
+            "support mime=${formatConfig.format.sampleMimeType} pcm=${formatConfig.format.pcmEncoding} " +
+                "rate=${formatConfig.format.sampleRate} ch=${formatConfig.format.channelCount} " +
+                "pendingDepth=$pendingSourceBitDepth",
+        )
         // Direct support only for raw PCM families the AAudio backend
         // consumes. Compressed formats carry pcmEncoding metadata too
         // (e.g. FLAC stream info), so sampleMimeType must be audio/raw —
@@ -130,6 +146,18 @@ class RoutedAudioOutputProvider(context: Context) :
             C.ENCODING_PCM_FLOAT -> C.ENCODING_PCM_FLOAT
             else -> C.ENCODING_PCM_16BIT
         }
+        // The depth to pack at follows the format being configured, not a value accumulated from
+        // probes: float and 24-bit int both carry at most a 24-bit sample, and anything narrower is
+        // 16. This is stored for the getAudioOutput call that always follows this one.
+        pendingOutputBitDepth = when (formatConfig.format.pcmEncoding) {
+            C.ENCODING_PCM_24BIT, C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> 24
+            else -> 16
+        }
+        android.util.Log.i(
+            "SertumRoute",
+            "config -> encoding=$encoding depth=$pendingOutputBitDepth " +
+                "for pcm=${formatConfig.format.pcmEncoding} rate=${formatConfig.format.sampleRate}",
+        )
         val channelMask = when (formatConfig.format.channelCount) {
             2 -> android.media.AudioFormat.CHANNEL_OUT_STEREO
             else -> android.media.AudioFormat.CHANNEL_OUT_MONO
@@ -159,7 +187,7 @@ class RoutedAudioOutputProvider(context: Context) :
         return BackendAudioOutput(
             backend,
             outputConfig,
-            pendingSourceBitDepth,
+            pendingOutputBitDepth,
             playWhenReady = { playWhenReady },
             deviceId = usbDeviceId() ?: 0,
         ).also { exclusiveOutputs.add(it) }
