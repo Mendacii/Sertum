@@ -16,6 +16,7 @@
     <!-- 空态与权限 -->
     <string name="no_items_yet">还没有%1$s</string>
     <string name="empty_library_hint">在设置中授权媒体访问、添加文件夹，或开启「全盘扫描」索引整台设备。</string>
+    <string name="grant_media_access">授予音乐权限</string>
     <string name="open_app_settings">打开应用设置</string>
     <string name="unknown_artist">未知艺术家</string>
 

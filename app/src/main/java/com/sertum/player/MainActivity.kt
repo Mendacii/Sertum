@@ -8,6 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.sertum.player.ui.SertumApp
+import com.sertum.player.ui.screens.library.hasMediaPermission
+import com.sertum.player.ui.screens.library.mediaPermissionName
 import com.sertum.player.ui.settings.LanguageOption
 import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.ui.theme.SertumTheme
@@ -88,6 +90,24 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* granted or denied; playback continues either way */ }
 
+    /**
+     * Asked for on first launch, because without it the app cannot see a single file.
+     *
+     * The permission was declared and read but never requested: the library went empty on a fresh
+     * install, the startup scan skipped silently, and the only way forward was the app's system
+     * settings page - which is not where a reader looks. Nothing had been scanned while it was
+     * missing, so granting it has to produce a library.
+     */
+    private val mediaPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) (application as SertumApplication).requestLibraryScan()
+        }
+
+    private fun askForMediaAccessIfNeeded() {
+        if (hasMediaPermission(this)) return
+        mediaPermissionLauncher.launch(mediaPermissionName())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as SertumApplication
@@ -119,6 +139,9 @@ class MainActivity : ComponentActivity() {
             if (intent?.getStringExtra(EXTRA_ROUND_COVER) == "1") {
                 SettingsStateHolder.update { it.copy(roundCover = true) }
             }
+            // After the seed and the diagnostic overrides, so the dialog belongs to the launch the
+            // reader is actually looking at.
+            askForMediaAccessIfNeeded()
         }
         app.playbackController.notificationPermissionRequester = {
             if (

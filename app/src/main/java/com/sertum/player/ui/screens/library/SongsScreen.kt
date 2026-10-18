@@ -59,19 +59,33 @@ fun SongsScreen() {
         placeholder = stringResource(R.string.search_all_placeholder),
     ) {
         val context = LocalContext.current
-        val granted = hasMediaPermission(context)
+        val app = context.applicationContext as SertumApplication
+        // Held in state, not recomputed inline: the answer changes while this screen is on display,
+        // when the system dialog is answered or the reader comes back from the settings page.
+        var granted by remember { mutableStateOf(hasMediaPermission(context)) }
+        val mediaPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { accepted ->
+            granted = accepted || hasMediaPermission(context)
+            // Nothing had been scanned while the permission was missing, so granting it has to
+            // produce a library rather than leave the reader looking at an empty list.
+            if (granted) app.requestLibraryScan()
+        }
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                    granted = hasMediaPermission(context)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         if (!granted) {
             EmptyLibrary(
                 label = stringResource(R.string.nav_songs),
-                actionText = stringResource(R.string.open_app_settings),
-                onAction = {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            android.net.Uri.parse("package:${context.packageName}"),
-                        ),
-                    )
-                },
+                actionText = stringResource(R.string.grant_media_access),
+                onAction = { mediaPermissionLauncher.launch(mediaPermissionName()) },
             )
         } else if (visible.isEmpty()) {
             EmptyLibrary(
@@ -211,6 +225,14 @@ fun TrackRow(
         )
     }
 }
+
+/** The permission this platform calls "may read the music library". */
+internal fun mediaPermissionName(): String =
+    if (android.os.Build.VERSION.SDK_INT >= 33) {
+        android.Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    }
 
 internal fun hasMediaPermission(context: android.content.Context): Boolean {
     val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
