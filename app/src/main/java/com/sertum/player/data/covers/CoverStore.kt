@@ -22,14 +22,71 @@ import java.security.MessageDigest
  * The fallback is deliberately narrow - one shape, the key with its format suffix removed - so
  * that it cannot reach a different album's artwork.
  */
-class CoverStore(private val filesDir: File) {
+class CoverStore(
+    private val filesDir: File,
+    /**
+     * A second copy of the reader's own covers, outside the app's data directory.
+     *
+     * Everything else in this store can be rebuilt: embedded artwork is re-extracted from the files,
+     * folder artwork is re-found beside them, and the library itself is re-scanned. A cover the
+     * reader picked is the one thing that exists nowhere else, and it lived only under `filesDir` -
+     * which an uninstall or "clear data" deletes. That is not hypothetical: it happened here on
+     * 2026-10-18, when an installer uninstalled the app and twenty chosen covers went with it.
+     *
+     * So a chosen cover is also written here, on shared storage, where the app's own data directory
+     * cannot take it with it, and [restoreFromMirror] brings it back on the next scan. Null disables
+     * mirroring, which is what tests and any caller without storage access get.
+     */
+    private val mirrorDir: File? = null,
+) {
 
     private val dir: File by lazy { File(filesDir, "covers").apply { mkdirs() } }
 
     fun save(albumKey: String, bytes: ByteArray): String {
         val file = fileFor(albumKey)
         file.writeBytes(bytes)
+        mirror(albumKey, bytes)
         return file.absolutePath
+    }
+
+    /**
+     * Copies a mirrored cover back into the app's own store.
+     *
+     * Returns true when this call is what made the cover available again. The caller is expected to
+     * record the choice as well, since the row that held it lives in the same database an uninstall
+     * removes.
+     *
+     * Looked up through the same key candidates as a normal read, so a cover mirrored before the
+     * album key gained its format segment is still found.
+     */
+    fun restoreFromMirror(albumKey: String): Boolean {
+        val mirror = mirrorDir ?: return false
+        if (fileFor(albumKey).exists()) return false
+        val source = candidateKeys(albumKey)
+            .asSequence()
+            .map { File(mirror, sha256(it) + MIRROR_SUFFIX) }
+            .firstOrNull { it.isFile && it.length() > 0 }
+            ?: return false
+        return runCatching {
+            fileFor(albumKey).writeBytes(source.readBytes())
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Where [albumKey]'s mirrored copy would live, or null when mirroring is off. */
+    fun mirrorFileFor(albumKey: String): File? =
+        mirrorDir?.let { File(it, sha256(albumKey) + MIRROR_SUFFIX) }
+
+    /**
+     * Best effort on purpose: a device that will not let us write outside the app's data directory
+     * must still be able to save a cover locally.
+     */
+    private fun mirror(albumKey: String, bytes: ByteArray) {
+        val target = mirrorFileFor(albumKey) ?: return
+        runCatching {
+            target.parentFile?.mkdirs()
+            target.writeBytes(bytes)
+        }
     }
 
     fun saveEmbedded(albumKey: String, bytes: ByteArray): String {
@@ -116,4 +173,9 @@ class CoverStore(private val filesDir: File) {
         MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
+
+    private companion object {
+        /** Kept `.img` so that no photo index picks the mirror up as gallery content. */
+        const val MIRROR_SUFFIX = ".img"
+    }
 }

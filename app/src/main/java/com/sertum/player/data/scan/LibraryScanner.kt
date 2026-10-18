@@ -206,11 +206,26 @@ class LibraryScanner(
         val albums = mutableListOf<AlbumEntity>()
         val parsedByAlbum = expandedTracks.groupBy { it.track.albumKey }
         val keptByAlbum = keptTracks.groupBy { it.albumKey }
+        // A cover the reader picked can outlive this app's data: a copy is mirrored outside
+        // filesDir. Bring any of them back before the album rows are resolved, and treat those
+        // albums as changed - otherwise an incremental scan would reuse the row that says
+        // "placeholder" and the restored image would never be shown.
+        val restoredKeys = mutableSetOf<String>()
+        for (key in parsedByAlbum.keys + keptByAlbum.keys) {
+            if (coverStore.userCoverFor(key) == null && coverStore.restoreFromMirror(key)) {
+                restoredKeys += key
+                runCatching {
+                    dao.insertCover(
+                        CoverEntity(key, coverStore.fileFor(key).absolutePath, System.currentTimeMillis()),
+                    )
+                }
+            }
+        }
         for (key in parsedByAlbum.keys + keptByAlbum.keys) {
             val parsedRows = parsedByAlbum[key].orEmpty()
             val keptRows = keptByAlbum[key].orEmpty()
             val previous = existingAlbums[key]
-            if (key !in changedAlbumKeys && previous != null) {
+            if (key !in changedAlbumKeys && key !in restoredKeys && previous != null) {
                 albums += previous
                 continue
             }

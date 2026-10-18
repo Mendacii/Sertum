@@ -214,4 +214,84 @@ class CoverStoreTest {
 
         assertThat(store.userCoverFor("Death|Symbolic")).isNull()
     }
+
+    // --- The mirror: the reader's own covers outliving the app's data directory ---------------
+
+    private fun mirroredStore(): Pair<CoverStore, java.io.File> {
+        val data = folder.newFolder("data")
+        val mirror = folder.newFolder("mirror")
+        return CoverStore(data, mirror) to mirror
+    }
+
+    @Test
+    fun `saving a cover leaves a copy outside the app data directory`() {
+        val (store, mirror) = mirroredStore()
+
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+
+        val mirrored = store.mirrorFileFor("Death|Symbolic")
+        assertThat(mirrored).isNotNull()
+        assertThat(mirrored!!.parentFile).isEqualTo(mirror)
+        assertThat(mirrored.readBytes()).isEqualTo(byteArrayOf(7, 8, 9))
+    }
+
+    @Test
+    fun `a cover is restored when the app's own copy is gone`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        // What an uninstall or "clear data" does to filesDir.
+        assertThat(store.delete("Death|Symbolic")).isTrue()
+        assertThat(store.userCoverFor("Death|Symbolic")).isNull()
+
+        assertThat(store.restoreFromMirror("Death|Symbolic")).isTrue()
+
+        assertThat(store.userCoverFor("Death|Symbolic")).isNotNull()
+    }
+
+    @Test
+    fun `restoring leaves an existing cover alone`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+
+        assertThat(store.restoreFromMirror("Death|Symbolic")).isFalse()
+    }
+
+    @Test
+    fun `restoring does nothing when nothing was mirrored`() {
+        val (store, _) = mirroredStore()
+        assertThat(store.restoreFromMirror("Nobody|Nothing")).isFalse()
+    }
+
+    @Test
+    fun `a mirror that cannot be written does not lose the cover`() {
+        val data = folder.newFolder("data2")
+        val notADirectory = folder.newFile("mirror-is-a-file")
+        val store = CoverStore(data, notADirectory)
+
+        val path = store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+
+        assertThat(java.io.File(path).readBytes()).isEqualTo(byteArrayOf(7, 8, 9))
+        assertThat(store.userCoverFor("Death|Symbolic")).isNotNull()
+    }
+
+    @Test
+    fun `a cover mirrored under an older key is still restored`() {
+        val (store, _) = mirroredStore()
+        // Mirrored before the format segment joined the key, then the app data was lost.
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        store.delete("Death|Symbolic")
+
+        assertThat(store.restoreFromMirror("Death|Symbolic|FLAC")).isTrue()
+        assertThat(store.userCoverFor("Death|Symbolic|FLAC")).isNotNull()
+    }
+
+    @Test
+    fun `a store without a mirror never restores and never fails`() {
+        val store = store()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        store.delete("Death|Symbolic")
+
+        assertThat(store.mirrorFileFor("Death|Symbolic")).isNull()
+        assertThat(store.restoreFromMirror("Death|Symbolic")).isFalse()
+    }
 }

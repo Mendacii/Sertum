@@ -124,7 +124,14 @@ class SertumApplication : Application() {
             .build()
     }
 
-    val coverStore: CoverStore by lazy { CoverStore(filesDir) }
+    val coverStore: CoverStore by lazy {
+        // The mirror sits on shared storage, beside the music, because that is the only place an
+        // uninstall cannot reach. A hidden directory and `.img` names keep it out of the gallery.
+        CoverStore(
+            filesDir = filesDir,
+            mirrorDir = File(android.os.Environment.getExternalStorageDirectory(), "Music/.sertum-covers"),
+        )
+    }
 
     /** Durable user preferences; read once in [onCreate] before the first scan. */
     val preferences: AppPreferences by lazy { AppPreferences(this) }
