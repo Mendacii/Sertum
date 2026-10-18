@@ -47,12 +47,18 @@ class Uac2DeviceManager(private val context: Context) {
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(receiverContext: Context?, intent: Intent?) {
             if (intent?.action == ACTION_USB_PERMISSION) {
-                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                // The extra is not trustworthy: the system has to write EXTRA_PERMISSION_GRANTED
+                // into the intent, and an immutable PendingIntent silently drops it, which is why
+                // this reported granted=false for a grant the user had just approved. Ask the
+                // UsbManager what is actually true instead.
+                val extra = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                val device = findDevice()
+                val actually = device != null && usbManager.hasPermission(device)
                 android.util.Log.i(
                     "SertumUac2",
-                    "USB permission answer granted=$granted",
+                    "USB permission answer extra=$extra actual=$actually",
                 )
-                _permissionGranted.value = granted
+                _permissionGranted.value = actually
             }
         }
     }
@@ -85,7 +91,8 @@ class Uac2DeviceManager(private val context: Context) {
                 context.applicationContext,
                 0,
                 intent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                // Mutable on purpose: the system adds EXTRA_PERMISSION_GRANTED to this intent.
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             ),
         )
     }

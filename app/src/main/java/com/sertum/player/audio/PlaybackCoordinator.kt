@@ -405,7 +405,12 @@ class PlaybackCoordinator(
         if (mode == OutputMode.USB_EXCLUSIVE) {
             val device = uac2Manager.findDevice()
             if (device != null && !uac2Manager.hasPermission(device)) {
-                uac2Manager.requestPermission(device)
+                // One dialog at a time: a second request replaces the pending answer.
+                if (!awaitingUsbPermission) {
+                    awaitingUsbPermission = true
+                    uac2Manager.requestPermission(device)
+                        scope.launch { pollForUsbPermission() }
+                }
                 diagnostics.log(
                     DiagnosticLevel.INFO,
                     "output",
@@ -510,6 +515,36 @@ class PlaybackCoordinator(
      * that should announce the grant is not guaranteed to be delivered to a non-exported receiver,
      * and relying on it alone is what left the route waiting for a manual tap.
      */
+    /**
+     * Waits for the permission answer by asking the system, not by trusting an event.
+     *
+     * The broadcast reported granted=false for an approved dialog (an immutable PendingIntent
+     * dropped the extra the system writes), and a resumed activity is not guaranteed either.
+     * Polling is cheap, ends on its own, and depends on nothing but the state that matters.
+     */
+    private suspend fun pollForUsbPermission() {
+        repeat(120) {
+            kotlinx.coroutines.delay(250)
+            if (!awaitingUsbPermission) return
+            val device = uac2Manager.findDevice() ?: return
+            if (uac2Manager.hasPermission(device)) {
+                awaitingUsbPermission = false
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "uac2",
+                    "USB permission detected; selecting USB exclusive",
+                )
+                if (_outputMode.value == OutputMode.STANDARD) {
+                    switchOutputMode(OutputMode.USB_EXCLUSIVE)
+                } else if (_outputMode.value == OutputMode.USB_EXCLUSIVE && !exclusiveUsesUac2) {
+                    retryExclusiveRoute()
+                }
+                return
+            }
+        }
+        awaitingUsbPermission = false
+    }
+
     fun onAppResumed() {
         if (installingExclusive) return
         if (!awaitingUsbPermission) return
