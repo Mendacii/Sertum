@@ -32,6 +32,13 @@ data class StreamSpec(
     val channelCount: Int,
     val bitDepth: Int,
     val isExclusive: Boolean,
+    /**
+     * `AudioDeviceInfo.id` of the device to open on; 0 leaves the choice to the platform.
+     *
+     * Naming the device is what makes "exclusive" mean "exclusive on the DAC" rather than
+     * "exclusive on whatever the default output happens to be".
+     */
+    val deviceId: Int = 0,
 )
 
 data class BackendCapabilities(

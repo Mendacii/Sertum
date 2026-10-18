@@ -52,6 +52,7 @@ class ExclusiveRateMatrixTest {
         val actualFormat: Int,
         val sharingMode: Int,
         val deviceId: Int,
+        val requestedDeviceId: Int,
         val framesPerBurst: Int,
         val expectedBytes: Long,
         val submittedBytes: Long,
@@ -67,6 +68,8 @@ class ExclusiveRateMatrixTest {
         }
 
         val rateMatches: Boolean get() = actualRate == requestedRate
+        val deviceMatches: Boolean
+            get() = requestedDeviceId <= 0 || deviceId == requestedDeviceId
         val depthMatches: Boolean get() = actualDepth == requestedDepth
         val isExclusive: Boolean get() = sharingMode == 1
         val bytesMatch: Boolean get() = submittedBytes == expectedBytes
@@ -95,7 +98,7 @@ class ExclusiveRateMatrixTest {
 
         writeReport(rows, flinger, dumps)
 
-        val failures = rows.filter { !(it.isExclusive && it.rateMatches && it.depthMatches && it.bytesMatch) }
+        val failures = rows.filter { !(it.isExclusive && it.rateMatches && it.depthMatches && it.bytesMatch && it.deviceMatches) }
         assertWithMessage(
             buildString {
                 appendLine("rate/depth matrix did not hold:")
@@ -113,12 +116,39 @@ class ExclusiveRateMatrixTest {
         assertWithMessage("the audio flinger dump was empty").that(flinger.length).isGreaterThan(1000)
     }
 
+
+    /**
+     * A mono 24-bit stream must report every frame it wrote.
+     *
+     * The frame size used to be a constant six bytes for 24-bit - true only for stereo - so a mono
+     * write of 256 frames came back as 128 and the other half of the buffer was submitted again.
+     * 256 frames at 96 kHz is under three milliseconds, so the stream accepts all of it in one go
+     * and the number is the accounting, not the HAL.
+     */
+    @Test
+    fun mono24ReportsEveryFrameItWrote() {
+        Assume.assumeTrue("no USB audio device attached", hasUsbAudioDevice())
+        val usbId = usbAudioDeviceId() ?: 0
+        val backend = AaudioExclusiveBackend()
+        backend.open(StreamSpec(96_000, 1, 24, isExclusive = true, deviceId = usbId)).getOrThrow()
+        backend.play().getOrThrow()
+        try {
+            val frames = 256
+            val bytes = ByteArray(frames * 3)
+            val written = backend.writePcm(bytes, 0, bytes.size).getOrThrow()
+            assertWithMessage("mono 24-bit frame accounting").that(written).isEqualTo(frames)
+        } finally {
+            backend.release()
+        }
+    }
+
     private fun measure(rate: Int, depth: Int, capture: Boolean): Pair<Row, String> {
         val backend = AaudioExclusiveBackend()
-        val opened = backend.open(StreamSpec(rate, CHANNELS, depth, isExclusive = true))
+        val usbId = usbAudioDeviceId() ?: 0
+        val opened = backend.open(StreamSpec(rate, CHANNELS, depth, isExclusive = true, deviceId = usbId))
         if (opened.isFailure) {
             return Row(
-                rate, depth, 0, 0, 0, 0, 0, 0, 0, false,
+                rate, depth, 0, 0, 0, usbId, 0, 0, 0, 0, false,
                 "open failed: ${opened.exceptionOrNull()?.message}",
             ).let { it to "" }
         }
@@ -170,6 +200,7 @@ class ExclusiveRateMatrixTest {
             actualFormat = info.actualFormat,
             sharingMode = info.sharingMode,
             deviceId = info.deviceId,
+            requestedDeviceId = usbId,
             framesPerBurst = info.framesPerBurst,
             expectedBytes = expected,
             submittedBytes = tappedBytes,
@@ -201,6 +232,8 @@ class ExclusiveRateMatrixTest {
                     put("actualDepth", row.actualDepth)
                     put("sharingMode", row.sharingMode)
                     put("deviceId", row.deviceId)
+                    put("requestedDeviceId", row.requestedDeviceId)
+                    put("deviceMatches", row.deviceMatches)
                     put("framesPerBurst", row.framesPerBurst)
                     put("expectedBytes", row.expectedBytes)
                     put("submittedBytes", row.submittedBytes)
@@ -214,7 +247,7 @@ class ExclusiveRateMatrixTest {
         val report = JSONObject().apply {
             put("channels", CHANNELS)
             put("rows", matrix)
-            put("allMatch", rows.all { it.isExclusive && it.rateMatches && it.depthMatches && it.bytesMatch })
+            put("allMatch", rows.all { it.isExclusive && it.rateMatches && it.depthMatches && it.bytesMatch && it.deviceMatches })
         }
         val name = "exclusive-rate-matrix.json"
         runCatching { File(context.filesDir, name).writeText(report.toString(2)) }
@@ -233,6 +266,17 @@ class ExclusiveRateMatrixTest {
             }
         }
     }
+
+    /** The attached DAC's `AudioDeviceInfo.id`, the value the stream is told to open on. */
+    private fun usbAudioDeviceId(): Int? = runCatching {
+        context.getSystemService(AudioManager::class.java)
+            ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            ?.firstOrNull {
+                it.type == android.media.AudioDeviceInfo.TYPE_USB_DEVICE ||
+                    it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+            }
+            ?.id
+    }.getOrNull()
 
     private fun hasUsbAudioDevice(): Boolean {
         val audioManager = context.getSystemService(AudioManager::class.java) ?: return false

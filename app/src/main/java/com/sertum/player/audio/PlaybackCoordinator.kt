@@ -1,5 +1,8 @@
 package com.sertum.player.audio
 
+import com.sertum.player.audio.isUsbOutputDeviceId
+import com.sertum.player.audio.usbOutputDeviceId
+import com.sertum.player.audio.toOutputRef
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -318,6 +321,16 @@ class PlaybackCoordinator(
 
     fun switchOutputMode(mode: OutputMode) {
         if (mode == _outputMode.value) return
+        // Exclusive output is exclusive *on the DAC*. Asking for it with nothing plugged in used to
+        // flip the flag anyway, and the stream then opened exclusively on whatever the default
+        // output was - the phone's own speaker - while the UI reported USB exclusive. Refuse here,
+        // before anything is stopped or reconfigured.
+        if (mode == OutputMode.USB_EXCLUSIVE && attachedUsbDeviceId() == null) {
+            diagnostics.log(DiagnosticLevel.WARNING, "output", "USB exclusive refused: no USB audio device")
+            _userMessage.value = appContext.getString(com.sertum.player.R.string.usb_exclusive_requires_dac)
+            updateUiState()
+            return
+        }
         _outputMode.value = mode
         val wasPlaying = player.isPlaying
         player.stop()
@@ -329,6 +342,13 @@ class PlaybackCoordinator(
         }
         updateUiState()
     }
+
+    /** The attached DAC's `AudioDeviceInfo.id`, or null when there is none. */
+    private fun attachedUsbDeviceId(): Int? = runCatching {
+        usbOutputDeviceId(
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.toOutputRef() },
+        )
+    }.getOrNull()
 
     fun setBluetoothConnected(connected: Boolean) {
         if (_bluetoothConnected.value == connected) return
@@ -435,6 +455,7 @@ class PlaybackCoordinator(
         OutputMode.USB_EXCLUSIVE ->
             if (
                 exclusiveBackend.capabilities.isExclusive &&
+                streamIsOnUsbDevice() &&
                 systemMusicVolume01() >= 1f
             ) {
                 BitPerfectState.INTACT
@@ -442,6 +463,24 @@ class PlaybackCoordinator(
                 BitPerfectState.DEGRADED
             }
         else -> BitPerfectState.NOT_APPLICABLE
+    }
+
+    /**
+     * Whether the open stream is actually on the attached DAC.
+     *
+     * Exclusivity alone is not enough: an exclusive stream on the default output is still exclusive,
+     * and with nothing plugged in that default is the phone's own speaker. The badge only goes green
+     * when the stream's own device id names a USB audio output.
+     */
+    private fun streamIsOnUsbDevice(): Boolean {
+        val streamDeviceId = exclusiveBackend.observedStreamInfo().deviceId
+        if (streamDeviceId <= 0) return false
+        return runCatching {
+            isUsbOutputDeviceId(
+                audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.toOutputRef() },
+                streamDeviceId,
+            )
+        }.getOrDefault(false)
     }
 
     /**

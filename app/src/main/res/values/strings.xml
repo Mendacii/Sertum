@@ -52,6 +52,7 @@
     <string name="output_bluetooth">Bluetooth</string>
     <string name="output_standard">Standard output</string>
     <string name="error_streak_message">Several tracks failed in a row and were skipped. See Settings → Diagnostics.</string>
+    <string name="usb_exclusive_requires_dac">Connect a USB DAC first; exclusive output needs one.</string>
     <string name="usb_reconnect_failed_message">USB DAC reconnect failed after 3 attempts. Check the connection and try again.</string>
 
     <!-- Settings -->

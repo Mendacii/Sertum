@@ -24,7 +24,7 @@ static int bytesPerFrame(AAudioStream *stream) {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
-    JNIEnv *, jobject, jint sampleRate, jint channels, jint bits) {
+    JNIEnv *, jobject, jint sampleRate, jint channels, jint bits, jint deviceId) {
     AAudioStreamBuilder *builder = nullptr;
     if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) {
         LOGW("builder create failed");
@@ -36,6 +36,13 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
     AAudioStreamBuilder_setFormat(builder, formatForBits(bits));
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
+    // Bind the stream to the DAC itself. Without this the "exclusive" stream is exclusive on
+    // whatever the default output happens to be, which with no USB device attached is the
+    // phone's own speaker - exclusive, correctly reported as exclusive, and entirely the wrong
+    // device. 0 means "default", kept for callers that have no device to name.
+    if (deviceId > 0) {
+        AAudioStreamBuilder_setDeviceId(builder, deviceId);
+    }
 
     AAudioStream *stream = nullptr;
     aaudio_result_t res = AAudioStreamBuilder_openStream(builder, &stream);
@@ -140,6 +147,7 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeClose(JNIEnv *, jobject,
         return stream == nullptr ? 0 : static_cast<TYPE>(CALL(stream));           \
     }
 
+GETTER(ChannelCount, jint, AAudioStream_getChannelCount)
 GETTER(ActualRate, jint, AAudioStream_getSampleRate)
 GETTER(ActualFormat, jint, AAudioStream_getFormat)
 GETTER(SharingMode, jint, AAudioStream_getSharingMode)

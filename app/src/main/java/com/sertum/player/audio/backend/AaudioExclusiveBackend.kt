@@ -13,6 +13,8 @@ data class AaudioStreamInfo(
     val deviceId: Int = 0,
     val performanceMode: Int = 0,
     val framesPerBurst: Int = 0,
+    /** Channels the stream actually opened with; the frame size depends on it. */
+    val actualChannels: Int = 0,
 ) {
     val isExclusive: Boolean get() = sharingMode == 1
     val is24Bit: Boolean get() = actualFormat == 3
@@ -48,7 +50,7 @@ class AaudioExclusiveBackend : AudioOutputBackend {
         close()
         started = false
         this.spec = spec
-        val opened = AaudioNative.nativeOpen(spec.sampleRate, spec.channelCount, spec.bitDepth)
+        val opened = AaudioNative.nativeOpen(spec.sampleRate, spec.channelCount, spec.bitDepth, spec.deviceId)
         if (opened == 0L) return Result.failure(IllegalStateException("AAudio open failed"))
         handle = opened
         streamInfo = AaudioStreamInfo(
@@ -58,6 +60,8 @@ class AaudioExclusiveBackend : AudioOutputBackend {
             deviceId = AaudioNative.nativeGetDeviceId(handle),
             performanceMode = AaudioNative.nativeGetPerformanceMode(handle),
             framesPerBurst = AaudioNative.nativeGetFramesPerBurst(handle),
+            actualChannels = AaudioNative.nativeGetChannelCount(handle).takeIf { it > 0 }
+                ?: spec.channelCount,
         )
         capabilities = BackendCapabilities(
             supportsHardwareVolume = false,
@@ -71,8 +75,17 @@ class AaudioExclusiveBackend : AudioOutputBackend {
     }
 
     override fun writePcm(frame: ByteArray, offset: Int, length: Int): Result<Int> {
-        val bytesPerFrame = if (streamInfo.is24Bit) 6 else 4
-        val expected = length / bytesPerFrame
+        // Derived from the open stream, not assumed: a mono 24-bit stream packs three bytes per
+        // frame, and the old fixed six reported half of what was written, leaving the other half
+        // to be submitted again on the next call.
+        val frameBytes = packedFrameSize(
+            bitDepth = if (streamInfo.is24Bit) 24 else 16,
+            channels = streamInfo.actualChannels,
+        )
+        if (frameBytes <= 0) {
+            return Result.failure(IllegalStateException("unknown stream layout $streamInfo"))
+        }
+        val expected = length / frameBytes
         val written = AaudioNative.nativeWrite(handle, frame, offset, length)
         if (written < 0) {
             return Result.failure(IllegalStateException("AAudio write failed res=$written expected=$expected"))

@@ -33,6 +33,11 @@ class BackendAudioOutput(
     private val targetBitDepth: Int = 24,
     private val playWhenReady: () -> Boolean = { false },
     /**
+     * `AudioDeviceInfo.id` of the DAC this stream must open on; 0 leaves the choice to the
+     * platform. Naming it is what keeps an "exclusive" stream on the device the UI claims.
+     */
+    private val deviceId: Int = 0,
+    /**
      * Append-only observation hook for the digital-path audit (PS-PLAN-003
      * T2a): receives the exact bytes about to be handed to the backend.
      *
@@ -78,7 +83,7 @@ class BackendAudioOutput(
             C.ENCODING_PCM_24BIT, C.ENCODING_PCM_FLOAT -> targetDepth
             else -> 16
         }
-        backend.open(StreamSpec(sampleRate, channels, bitDepth, isExclusive = true))
+        backend.open(StreamSpec(sampleRate, channels, bitDepth, isExclusive = true, deviceId = deviceId))
             .getOrElse { throw androidx.media3.exoplayer.audio.AudioOutputProvider.InitializationException(it) }
         batchFrames = backend.getBufferSizeInFrames().coerceAtLeast(1_024)
         pacingWindowFrames = (batchFrames * 2).coerceAtLeast(2_048)

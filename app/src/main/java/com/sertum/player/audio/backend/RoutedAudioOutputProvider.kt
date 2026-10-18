@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import com.sertum.player.audio.toOutputRef
+import com.sertum.player.audio.usbOutputDeviceId
 import com.sertum.player.domain.playback.AudioOutputBackend
 
 /**
@@ -18,6 +20,8 @@ class RoutedAudioOutputProvider(context: Context) :
     androidx.media3.exoplayer.audio.ForwardingAudioOutputProvider(
         androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider.Builder(context).build(),
     ) {
+
+    private val appContext = context.applicationContext
 
     @Volatile
     var exclusiveBackend: AudioOutputBackend? = null
@@ -54,7 +58,22 @@ class RoutedAudioOutputProvider(context: Context) :
 
     private val exclusiveOutputs = java.util.concurrent.CopyOnWriteArrayList<BackendAudioOutput>()
 
-    private fun isExclusiveRoute(): Boolean = exclusiveEnabled && exclusiveBackend != null
+    private fun isExclusiveRoute(): Boolean =
+        exclusiveEnabled && exclusiveBackend != null && usbDeviceId() != null
+
+    /**
+     * The attached DAC's device id, or null when there is none.
+     *
+     * The exclusive route requires one: without a named device the stream would open on the
+     * default output - the phone's own speaker - and still report itself as exclusive.
+     */
+    private fun usbDeviceId(): Int? = runCatching {
+        val audioManager = appContext.getSystemService(android.media.AudioManager::class.java)
+            ?: return null
+        usbOutputDeviceId(
+            audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.toOutputRef() },
+        )
+    }.getOrNull()
 
     override fun getFormatSupport(
         formatConfig: androidx.media3.exoplayer.audio.AudioOutputProvider.FormatConfig,
@@ -131,6 +150,7 @@ class RoutedAudioOutputProvider(context: Context) :
             outputConfig,
             pendingSourceBitDepth,
             playWhenReady = { playWhenReady },
+            deviceId = usbDeviceId() ?: 0,
         ).also { exclusiveOutputs.add(it) }
     }
 

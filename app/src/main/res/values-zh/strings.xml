@@ -51,6 +51,7 @@
     <string name="output_bluetooth">蓝牙</string>
     <string name="output_standard">常规输出</string>
     <string name="error_streak_message">连续多首播放失败，已自动跳过。详情见 设置 → 诊断。</string>
+    <string name="usb_exclusive_requires_dac">请先连接 USB DAC，独占输出需要它。</string>
     <string name="usb_reconnect_failed_message">USB DAC 重连失败（3 次），请检查连接后手动重试。</string>
 
     <!-- 设置 -->
