@@ -192,6 +192,8 @@ class MainActivity : ComponentActivity() {
                 },
             ),
         )
+        // The USB permission dialog resumes this activity on answer; re-check there rather than
+        // trusting a broadcast that non-exported receivers may never see.
         app.playbackController.notificationPermissionRequester = {
             if (
                 Build.VERSION.SDK_INT >= 33 &&
@@ -247,4 +249,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        (application as SertumApplication).playbackController.onAppResumed()
+    }
+
 }

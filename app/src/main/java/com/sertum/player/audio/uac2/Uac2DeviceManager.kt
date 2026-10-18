@@ -48,6 +48,10 @@ class Uac2DeviceManager(private val context: Context) {
         override fun onReceive(receiverContext: Context?, intent: Intent?) {
             if (intent?.action == ACTION_USB_PERMISSION) {
                 val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                android.util.Log.i(
+                    "SertumUac2",
+                    "USB permission answer granted=$granted",
+                )
                 _permissionGranted.value = granted
             }
         }
@@ -96,6 +100,10 @@ class Uac2DeviceManager(private val context: Context) {
         session?.let { return Result.success(it) }
         val device = findDevice() ?: return Result.failure(IllegalStateException("no USB audio device"))
         if (!usbManager.hasPermission(device)) {
+            // The grant is not permanently true: it is forgotten when the device is unplugged, so
+            // the state has to go back to false here or the later grant looks like no change and
+            // never reaches the collector.
+            _permissionGranted.value = false
             requestPermission(device)
             return Result.failure(Uac2PermissionPending())
         }
@@ -128,6 +136,8 @@ class Uac2DeviceManager(private val context: Context) {
     fun close() {
         session?.release()
         session = null
+        // Nothing is claimed any more, so the previous grant no longer describes this state.
+        _permissionGranted.value = false
     }
 
     private companion object {

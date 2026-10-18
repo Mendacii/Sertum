@@ -126,6 +126,9 @@ class PlaybackCoordinator(
      */
     private var installingExclusive = false
 
+    /** Set when the exclusive route is waiting on the USB permission dialog. */
+    private var awaitingUsbPermission = false
+
     /** Set by MainActivity; requests POST_NOTIFICATIONS before the first playback. */
     @Volatile
     var notificationPermissionRequester: (() -> Unit)? = null
@@ -175,8 +178,10 @@ class PlaybackCoordinator(
                     }
                     // The gate kept us on the standard route; the grant unblocks the switch.
                     _outputMode.value == OutputMode.STANDARD &&
+                        awaitingUsbPermission &&
                         attachedUsbDeviceId() != null &&
                         SettingsStateHolder.state.value.autoExclusiveOnUsbAttach -> {
+                        awaitingUsbPermission = false
                         diagnostics.log(
                             DiagnosticLevel.INFO,
                             "uac2",
@@ -496,6 +501,30 @@ class PlaybackCoordinator(
             if (wasPlaying) player.play()
         }
         updateUiState()
+    }
+
+    /**
+     * Re-examines the exclusive route when the app comes back to the foreground.
+     *
+     * The USB permission dialog is its own activity, so granting it resumes this one. The broadcast
+     * that should announce the grant is not guaranteed to be delivered to a non-exported receiver,
+     * and relying on it alone is what left the route waiting for a manual tap.
+     */
+    fun onAppResumed() {
+        if (installingExclusive) return
+        if (!awaitingUsbPermission) return
+        val device = uac2Manager.findDevice() ?: return
+        if (!uac2Manager.hasPermission(device)) return
+        awaitingUsbPermission = false
+        diagnostics.log(
+            DiagnosticLevel.INFO,
+            "uac2",
+            "USB permission present on resume; selecting USB exclusive",
+        )
+        when {
+            _outputMode.value == OutputMode.STANDARD -> switchOutputMode(OutputMode.USB_EXCLUSIVE)
+            _outputMode.value == OutputMode.USB_EXCLUSIVE && !exclusiveUsesUac2 -> retryExclusiveRoute()
+        }
     }
 
     private fun teardownUac2() {
