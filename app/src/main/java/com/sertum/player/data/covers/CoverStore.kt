@@ -186,7 +186,27 @@ class CoverStore(
     /** Test seam: the keys a look-up for [albumKey] would try, in order. */
     internal fun candidateKeys(albumKey: String): List<String> = listOf(albumKey) + legacyKeysFor(albumKey)
 
-    fun delete(albumKey: String): Boolean = fileFor(albumKey).delete()
+    /**
+     * Removes the reader's cover for [albumKey], everywhere it is stored.
+     *
+     * Deleting only the local copy was not a delete: [save] also writes a mirror outside the app's
+     * data directory, and [restoreFromMirror] runs on every scan, so a removed cover came back the
+     * next time the library was scanned. The older key forms are removed too - [userCoverFor] reads
+     * through them, so leaving one behind would keep the cover visible after the reader removed it,
+     * and [ensureMirrored] could copy that file back into the mirror.
+     *
+     * Returns true when at least one copy existed and was removed. A missing copy is not an error:
+     * the postcondition callers rely on is "no cover for this key", not "one file was deleted".
+     */
+    fun delete(albumKey: String): Boolean {
+        var removed = false
+        for (key in candidateKeys(albumKey)) {
+            if (fileFor(key).delete()) removed = true
+            val mirror = mirrorFileFor(key) ?: continue
+            if (mirror.delete()) removed = true
+        }
+        return removed
+    }
 
     fun fileFor(albumKey: String): File = File(dir, sha256(albumKey) + ".img")
 

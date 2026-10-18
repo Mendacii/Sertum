@@ -60,7 +60,6 @@
     <!-- Short tile labels for the settings grid; the long titles above stay
          where a sentence is genuinely needed. -->
     <string name="settings_scan_on_startup_short">Scan at start</string>
-    <string name="settings_full_scan_short">Full scan</string>
     <string name="settings_add_folder_short">Add folder</string>
     <string name="settings_incremental_scan_short">Incremental scan</string>
     <string name="settings_rescan_short">Rescan</string>
@@ -95,8 +94,8 @@
     <!-- Section info dialogs: the per-option explanations behind each title's (i) -->
     <string name="settings_info_scan_on_startup">Scan at start</string>
     <string name="settings_info_scan_on_startup_desc">Rescans the library every time the app starts. When off, scanning happens only on a manual rescan or after adding a folder.</string>
-    <string name="settings_info_full_scan">Full scan</string>
-    <string name="settings_info_full_scan_desc">Scans every audio file the system has indexed, not only the folders you added. Off means only the folders you add are scanned, and no folder means an empty library. Off by default.</string>
+    <string name="settings_info_folder_covers">Folder artwork</string>
+    <string name="settings_info_folder_covers_desc">Reads cover images stored beside the tracks (cover.jpg and friends). Requires the all-files access grant. When off, albums fall back to embedded artwork or the placeholder. Off by default.</string>
     <string name="settings_info_add_folder">Add folder</string>
     <string name="settings_info_add_folder_desc">Pick a music folder and grant lasting read access. Added folders are listed below and can be removed one by one.</string>
     <string name="settings_info_rescan">Rescan</string>
@@ -126,4 +125,5 @@
     <string name="settings_info_close">Close</string>
     <string name="usb_permission_pending">Allow USB access to send audio straight to the DAC; playback uses the fallback route until then.</string>
     <string name="background_freeze_hint">The system froze the player in the background. Set Battery saver to "No restrictions" for this app.</string>
+    <string name="settings_folder_covers_short">Folder artwork</string>
 </resources>

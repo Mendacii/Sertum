@@ -150,7 +150,7 @@ class SertumApplication : Application() {
             safDirectoryStore,
             // The switch lives in preferences, which outlive the process; the scanner asks for it
             // when a scan starts rather than capturing the value at construction.
-            fullScanEnabled = { preferences.fullScanEnabled.value },
+            folderCoversEnabled = { preferences.folderCoversEnabled.value },
         )
     }
 

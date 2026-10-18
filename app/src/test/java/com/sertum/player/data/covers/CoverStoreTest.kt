@@ -239,8 +239,9 @@ class CoverStoreTest {
     fun `a cover is restored when the app's own copy is gone`() {
         val (store, _) = mirroredStore()
         store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
-        // What an uninstall or "clear data" does to filesDir.
-        assertThat(store.delete("Death|Symbolic")).isTrue()
+        // What an uninstall or "clear data" does to filesDir: the local copy goes, the mirror
+        // outside the app's data directory stays.
+        assertThat(store.fileFor("Death|Symbolic").delete()).isTrue()
         assertThat(store.userCoverFor("Death|Symbolic")).isNull()
 
         assertThat(store.restoreFromMirror("Death|Symbolic")).isTrue()
@@ -277,9 +278,10 @@ class CoverStoreTest {
     @Test
     fun `a cover mirrored under an older key is still restored`() {
         val (store, _) = mirroredStore()
-        // Mirrored before the format segment joined the key, then the app data was lost.
+        // Mirrored before the format segment joined the key, then the app data was lost: only the
+        // local copy is removed here - deleting the reader's cover is a different operation.
         store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
-        store.delete("Death|Symbolic")
+        store.fileFor("Death|Symbolic").delete()
 
         assertThat(store.restoreFromMirror("Death|Symbolic|FLAC")).isTrue()
         assertThat(store.userCoverFor("Death|Symbolic|FLAC")).isNotNull()
@@ -332,5 +334,94 @@ class CoverStoreTest {
         store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
 
         assertThat(store.ensureMirrored("Death|Symbolic")).isFalse()
+    }
+
+    // --- Deleting a cover -----------------------------------------------------------------------
+    //
+    // "Remove cover" used to delete the local file only. The mirror survived it, and every scan
+    // restores from the mirror, so the cover came back on the next rescan - the deletion lasted
+    // until then. These cases pin the whole state a delete has to reach.
+
+    @Test
+    fun `deleting a cover removes the mirrored copy as well`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        val mirror = store.mirrorFileFor("Death|Symbolic")!!
+        assertThat(mirror.isFile).isTrue()
+
+        assertThat(store.delete("Death|Symbolic")).isTrue()
+
+        assertThat(store.fileFor("Death|Symbolic").exists()).isFalse()
+        assertThat(mirror.exists()).isFalse()
+        assertThat(store.userCoverFor("Death|Symbolic")).isNull()
+    }
+
+    @Test
+    fun `a deleted cover is not restored by the next scan`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        store.delete("Death|Symbolic")
+
+        // The scanner's first step: nothing local, so try the mirror.
+        assertThat(store.restoreFromMirror("Death|Symbolic")).isFalse()
+        assertThat(store.userCoverFor("Death|Symbolic")).isNull()
+        // And its second step: backfill from a local copy that no longer exists.
+        assertThat(store.ensureMirrored("Death|Symbolic")).isFalse()
+        assertThat(store.mirrorFileFor("Death|Symbolic")!!.exists()).isFalse()
+    }
+
+    @Test
+    fun `deleting a cover removes the copy stored under an older key`() {
+        val (store, _) = mirroredStore()
+        val older = "At the Gates|Slaughter of the Soul [Reissue]"
+        val current = "$older|FLAC"
+        store.save(older, byteArrayOf(1, 2, 3))
+        store.save(current, byteArrayOf(4, 5, 6))
+        assertThat(store.userCoverFor(current)).isNotNull()
+
+        assertThat(store.delete(current)).isTrue()
+
+        // Both names, locally and in the mirror: a leftover under either one would still be read
+        // by userCoverFor / restored by restoreFromMirror.
+        assertThat(store.fileFor(older).exists()).isFalse()
+        assertThat(store.fileFor(current).exists()).isFalse()
+        assertThat(store.mirrorFileFor(older)!!.exists()).isFalse()
+        assertThat(store.mirrorFileFor(current)!!.exists()).isFalse()
+        assertThat(store.userCoverFor(current)).isNull()
+        assertThat(store.userCoverFor(older)).isNull()
+    }
+
+    @Test
+    fun `a deleted fallback cover cannot be backfilled under the current key`() {
+        val (store, _) = mirroredStore()
+        val older = "At the Gates|Slaughter of the Soul [Reissue]"
+        // The cover only ever existed under the pre-format key; the current key finds it by
+        // fallback, which is the shape the scanner's cover loop runs on.
+        store.save(older, byteArrayOf(1))
+
+        store.delete("$older|FLAC")
+
+        assertThat(store.ensureMirrored("$older|FLAC")).isFalse()
+        assertThat(store.mirrorFileFor(older)!!.exists()).isFalse()
+        assertThat(store.mirrorFileFor("$older|FLAC")!!.exists()).isFalse()
+        assertThat(store.userCoverFor("$older|FLAC")).isNull()
+    }
+
+    @Test
+    fun `deleting one album's cover leaves another album's cover alone`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(1))
+        store.save("Dark Tranquillity|The Gallery", byteArrayOf(2))
+
+        assertThat(store.delete("Death|Symbolic")).isTrue()
+
+        assertThat(store.userCoverFor("Dark Tranquillity|The Gallery")).isNotNull()
+        assertThat(store.mirrorFileFor("Dark Tranquillity|The Gallery")!!.exists()).isTrue()
+    }
+
+    @Test
+    fun `deleting a cover that does not exist reports nothing to delete`() {
+        val (store, _) = mirroredStore()
+        assertThat(store.delete("Nobody|Nothing")).isFalse()
     }
 }

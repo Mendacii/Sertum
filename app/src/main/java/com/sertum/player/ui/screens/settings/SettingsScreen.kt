@@ -20,8 +20,8 @@ import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -107,7 +107,6 @@ fun SettingsScreen(initialInfoSection: String? = null) {
         // Durable in AppPreferences, not SettingsStateHolder: Application.onCreate
         // reads it before any UI exists.
         val scanOnStartup by app.preferences.scanOnStartup.collectAsState()
-        val fullScanEnabled by app.preferences.fullScanEnabled.collectAsState()
         SettingsTileGrid {
             SettingsTile(
                 label = stringResource(R.string.settings_scan_on_startup_short),
@@ -116,18 +115,17 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 selected = scanOnStartup,
                 onClick = { app.preferences.setScanOnStartup(!scanOnStartup) },
             )
+            // Folder artwork, not scanning scope. Turning this on sends the reader to the all-files
+            // page, because that grant is what allows a directory listing beside the tracks; the
+            // media index is enumerated on every scan regardless of it.
+            val folderCovers by app.preferences.folderCoversEnabled.collectAsState()
             SettingsTile(
-                label = stringResource(R.string.settings_full_scan_short),
+                label = stringResource(R.string.settings_folder_covers_short),
                 icon = Icons.Filled.FolderOpen,
                 emphasis = TileEmphasis.TOGGLE,
-                selected = fullScanEnabled,
-                // Turning this on also sends the reader to the all-files access page, because that
-                // grant is what lets the scan see folder artwork: album covers stored as a
-                // `cover.jpg` beside the tracks are resolved with a directory listing and opened by
-                // path, neither of which works without it. The switch still does its own job - it
-                // gates the media index - but on its own it left every folder-covered album blank.
+                selected = folderCovers,
                 onClick = {
-                    val enabling = !fullScanEnabled
+                    val enabling = !folderCovers
                     val isManager = android.os.Build.VERSION.SDK_INT >= 30 &&
                         android.os.Environment.isExternalStorageManager()
                     if (enabling && !isManager) {
@@ -140,7 +138,7 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                             )
                         }
                     }
-                    app.preferences.setFullScanEnabled(enabling)
+                    app.preferences.setFolderCoversEnabled(enabling)
                 },
             )
             SettingsTile(

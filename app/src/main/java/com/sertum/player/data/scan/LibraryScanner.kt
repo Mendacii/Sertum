@@ -44,12 +44,6 @@ data class ScanProgress(
 )
 
 /**
- * Bootstrap scanner for the production library: MediaStore source ->
- * MediaMetadataRetriever -> Room (tracks/albums/artists). Replaces all
- * MEDIA_STORE rows on each run (full rescan semantics; incremental diffing
- * stays with ScanEngine for the M3 milestone follow-up).
- */
-/**
  * How many files are parsed at once, and how many chunks each worker gets before the results are
  * applied and progress is posted.
  *
@@ -61,20 +55,30 @@ private const val PARSE_WORKERS = 6
 
 private const val PARSE_CHUNKS_PER_WORKER = 4
 
+/**
+ * Bootstrap scanner for the production library: MediaStore source ->
+ * MediaMetadataRetriever -> Room (tracks/albums/artists).
+ *
+ * A full scan re-reads every file reported by the sources; an incremental one re-reads only the
+ * new and changed files. Both compute their removals from the stored rows by URI, so a track is
+ * removed only when no enumerated source reports it any more - never because this attempt to read
+ * it failed. MediaStore is always enumerated; see [scanBlocking].
+ */
 class LibraryScanner(
     private val context: Context,
     private val dao: LibraryDao,
     private val coverStore: CoverStore,
     private val safDirectories: SafDirectoryStore,
     /**
-     * Whether this scan may look at the whole device.
+     * Whether a scan may look inside album folders for a `cover.jpg`.
      *
-     * A provider rather than a value: a scan can start long after the scanner was constructed, and
-     * the answer belongs to the settings screen. The default keeps the scanner usable in tests and
-     * anywhere the switch does not exist, and `false` is the safe end - only files the reader
-     * pointed at.
+     * This is not a scanning scope any more: MediaStore is the only device-wide source and it is
+     * enumerated unconditionally (gating it used to empty the candidate list, and the next full
+     * scan then deleted the library). What the switch still buys is the all-files grant, without
+     * which a directory listing beside the tracks is impossible - so folder artwork is the one
+     * feature it actually controls.
      */
-    private val fullScanEnabled: () -> Boolean = { false },
+    private val folderCoversEnabled: () -> Boolean = { false },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -126,43 +130,72 @@ class LibraryScanner(
      * Untouched albums are carried over as they were rather than rebuilt, which is not only faster:
      * their artwork came from an embedded picture or a folder image that this scan never looked at,
      * so rebuilding them from scratch would have replaced a real cover with the placeholder.
+     *
+     * Removals are explicit: [ScanEngine.writePlan] decides which stored rows survive. A full scan
+     * no longer deletes the table first - that also removed the rows of files whose read failed
+     * during the scan, which is track loss disguised as a rescan. Only files no enumerated source
+     * reported are deleted.
      */
     suspend fun scanBlocking(incremental: Boolean = false): ScanStats {
         val startedAt = android.os.SystemClock.elapsedRealtime()
-        val fullScan = fullScanEnabled()
-        val mediaCandidates = if (fullScan) {
+        // MediaStore is enumerated on every scan, unconditionally. It used to be gated by the
+        // "full scan" setting, which read like a scope choice but was in fact the only thing that
+        // fed this source: off meant an empty candidate list, and a full scan then deleted every
+        // row. MediaStoreSource is only a MediaStore query - there is no whole-device walker
+        // behind the setting - so it had no other job and is gone from the settings page.
+        //
+        // The permission is still checked first. Without it the query yields nothing, and to a
+        // scanner "nothing" is indistinguishable from "every file was deleted", which is the same
+        // data-loss path in another disguise. When it is missing, MediaStore rows are protected
+        // from deletion below and only the added SAF folders are processed.
+        val mediaStoreReadable = hasMediaPermission()
+        val mediaCandidates = if (mediaStoreReadable) {
+            // Deliberately not runCatching: a query that fails is not evidence that the library is
+            // empty. The failure aborts the scan and leaves the stored library untouched.
             withContext(Dispatchers.IO) { MediaStoreSource(context).scan() }
         } else {
             emptyList()
         }
+        // A tree that cannot be walked is not an empty tree. It is recorded so the rows it fed are
+        // kept out of the delete list: losing the grant for a folder must not empty that folder out
+        // of the library.
+        val unreadableSafTrees = mutableListOf<Uri>()
         val safCandidates = safDirectories.load().flatMap { treeUri ->
             runCatching {
                 SafSource().scan(context, treeUri) { found ->
                     _progress.value = ScanProgress(phase = "collecting", candidates = found)
                 }
-            }.getOrDefault(emptyList())
+            }.getOrElse { error ->
+                unreadableSafTrees += treeUri
+                android.util.Log.w("SertumScan", "SAF tree unreadable: $treeUri", error)
+                emptyList()
+            }
         }
         val candidates = (mediaCandidates + safCandidates).distinctBy { it.uri }
+        val reportedUris = candidates.mapTo(HashSet()) { it.uri }
         val enumerateMs = android.os.SystemClock.elapsedRealtime() - startedAt
 
-        // Decide what to read before reading anything.
-        val existingTracks = if (incremental) dao.allTracks() else emptyList()
-        val scanPlan = if (incremental) {
-            ScanEngine().plan(
-                existingTracks.map { ExistingTrack(it.uri, it.sizeBytes, it.modifiedAtEpochMs) },
-                candidates,
-            )
-        } else {
-            null
-        }
-        val toParse = scanPlan?.toParse ?: candidates
-        val removedUris = scanPlan?.toDeleteUris.orEmpty()
+        // Read the stored rows in both modes. A full scan still re-reads every candidate - that is
+        // what asking for one means - but it no longer starts by deleting the whole table: the
+        // removal list is computed from these rows, which is what lets a file that failed to parse
+        // keep its place.
+        val existingTracks = dao.allTracks()
+        val scanEngine = ScanEngine()
+        val scanPlan = scanEngine.plan(
+            existingTracks.map { ExistingTrack(it.uri, it.sizeBytes, it.modifiedAtEpochMs) },
+            candidates,
+        )
+        val toParse = if (incremental) scanPlan.toParse else candidates
+        val removedUris = scanPlan.toDeleteUris
         val reparsedUris = toParse.map { it.uri }.toSet()
 
         _progress.value = ScanProgress(phase = "parsing", candidates = toParse.size)
         val parseStartedAt = android.os.SystemClock.elapsedRealtime()
         var parsed = 0
         var failed = 0
+        // Candidate URIs whose metadata could not be read this time. Their stored rows are kept:
+        // a failed read is a statement about this scan, not about the file having been deleted.
+        val failedUris = mutableSetOf<String>()
         val parsedTracks = mutableListOf<ParsedTrack>()
         val embeddedPaths = mutableMapOf<String, String?>()
         val embeddedAttempted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -170,13 +203,16 @@ class LibraryScanner(
         toParse.chunked(workers * PARSE_CHUNKS_PER_WORKER).forEach { chunk ->
             val results = coroutineScope {
                 chunk.map { candidate ->
-                    async(Dispatchers.IO) { runCatching { parse(candidate, embeddedAttempted) }.getOrNull() }
+                    async(Dispatchers.IO) {
+                        candidate to runCatching { parse(candidate, embeddedAttempted) }.getOrNull()
+                    }
                 }.awaitAll()
             }
-            results.forEach { result ->
+            results.forEach { (candidate, result) ->
                 val parsedTrack = result?.parsed
                 if (parsedTrack == null) {
                     failed += 1
+                    failedUris += candidate.uri
                 } else {
                     parsedTracks += parsedTrack
                     parsed += 1
@@ -200,8 +236,31 @@ class LibraryScanner(
         val oldRows = existingTracks.filter { it.uri in affectedUris }
         val changedAlbumKeys = expandedTracks.map { it.track.albumKey }.toSet() +
             oldRows.map { it.albumKey }.toSet()
-        val keptTracks = existingTracks.filter { it.uri !in affectedUris }
-        val existingAlbums = if (incremental) dao.allAlbums().associateBy { it.albumKey } else emptyMap()
+        // Rows the scan has no evidence about must not be deleted. A failed read, a media index it
+        // was not allowed to query, and a SAF tree that could not be walked all look like "the
+        // file is gone" to a naive diff; none of them is evidence of that.
+        val protectedUris = mutableSetOf<String>()
+        protectedUris += failedUris
+        if (!mediaStoreReadable) {
+            existingTracks
+                .filter { it.source == SourceType.MEDIA_STORE }
+                .mapTo(protectedUris) { it.uri }
+        }
+        if (unreadableSafTrees.isNotEmpty()) {
+            existingTracks
+                .filter { it.source == SourceType.SAF }
+                .mapTo(protectedUris) { it.uri }
+        }
+        val writePlan = scanEngine.writePlan(
+            existing = existingTracks.map { ExistingTrack(it.uri, it.sizeBytes, it.modifiedAtEpochMs) },
+            reportedUris = reportedUris,
+            reparsedUris = reparsedUris,
+            protectedUris = protectedUris,
+        )
+        // Rows this scan did not rewrite - unchanged files, and files whose read failed. They
+        // stay in their albums, and those albums are rebuilt with a track count that includes them.
+        val keptTracks = existingTracks.filter { it.uri in writePlan.keptUris }
+        val existingAlbums = dao.allAlbums().associateBy { it.albumKey }
 
         val albums = mutableListOf<AlbumEntity>()
         val parsedByAlbum = expandedTracks.groupBy { it.track.albumKey }
@@ -233,9 +292,13 @@ class LibraryScanner(
                 albums += previous
                 continue
             }
-            if (parsedRows.isEmpty() && previous != null) {
-                // Nothing was re-read for this album - a track of it was deleted. Its covers are
-                // the ones it already had, re-resolved so a file that has since gone is dropped.
+            if (parsedRows.isEmpty()) {
+                // Nothing was re-read for this album: either all of its tracks were deleted, or
+                // every file of it failed to read this time and keptRows holds what is still
+                // stored. Its covers are the ones it already had, re-resolved so a file that has
+                // since gone is dropped. `previous` is only null if the stored rows and album rows
+                // disagree; dropping the album then is the least surprising repair.
+                if (previous == null) continue
                 val folderCover = previous.folderCoverPath?.takeIf { File(it).isFile }
                 val embeddedPath = previous.embeddedCoverPath?.takeIf { File(it).isFile }
                 val userCover = coverStore.userCoverFor(key)
@@ -296,9 +359,14 @@ class LibraryScanner(
         val imageChoices = dao.artistImageChoices().associate { it.name to it.imageAlbumKey }
 
         // One transaction for the whole result: 1,352 row writes used to be 1,352 commits.
+        //
+        // `deleteAllSources` is deliberately false even for a full scan: "delete the table, then
+        // write back what was read" is what removed tracks whose file had merely failed to open.
+        // The explicit URI list below is the same rewrite without the window in which a temporary
+        // read failure looks like a deletion - only rows whose file no source reported are on it.
         dao.applyLibrary(
-            deleteAllSources = !incremental,
-            urisToDelete = if (incremental) affectedUris.toList() else emptyList(),
+            deleteAllSources = false,
+            urisToDelete = writePlan.urisToDelete,
             tracks = expandedTracks.map { it.track },
             albums = albums,
             artists = artists.map { artist -> artist.copy(imageAlbumKey = imageChoices[artist.name]) },
@@ -308,9 +376,11 @@ class LibraryScanner(
         val finishedAt = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i(
             "SertumScanTiming",
-            "mode=${if (incremental) "incremental" else "full"} fullScan=$fullScan " +
-                "candidates=${candidates.size} parsed=$parsed failed=$failed " +
-                "unchanged=${scanPlan?.unchangedCount ?: 0} removed=${removedUris.size} " +
+            "mode=${if (incremental) "incremental" else "full"} " +
+                "mediaReadable=$mediaStoreReadable candidates=${candidates.size} parsed=$parsed " +
+                "failed=$failed deleted=${writePlan.urisToDelete.size} kept=${keptTracks.size} " +
+                "unchanged=${if (incremental) scanPlan.unchangedCount else 0} " +
+                "removed=${removedUris.size} " +
                 "enumerateMs=$enumerateMs parseMs=$parseMs applyMs=$applyMs " +
                 "totalMs=${finishedAt - startedAt}",
         )
@@ -320,12 +390,31 @@ class LibraryScanner(
             failed = failed,
             albums = albums.size,
             artists = artists.size,
-            unchanged = scanPlan?.unchangedCount ?: 0,
+            unchanged = if (incremental) scanPlan.unchangedCount else 0,
             incremental = incremental,
         )
     }
 
+    /**
+     * Whether the media index may be read.
+     *
+     * Checked instead of assumed from the settings page: the grant can be revoked while the app is
+     * installed, and an empty query result must not be read as an empty library.
+     */
+    private fun hasMediaPermission(): Boolean {
+        val permission = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            android.Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return context.checkSelfPermission(permission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
     private fun resolveFolderCover(folderPath: String): String? {
+        // Reading a file beside the music needs the all-files grant; without the switch (and its
+        // grant) the listing is denied, so do not pretend to look.
+        if (!folderCoversEnabled()) return null
         val dir = File(folderPath)
         if (!dir.isDirectory) return null
         return listOf("cover.jpg", "cover.png", "folder.jpg", "Folder.jpg", "Cover.jpg")

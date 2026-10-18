@@ -60,20 +60,16 @@ class AppPreferences(context: Context) {
     }
 
     /**
-     * Whether a scan may look at the whole device instead of only the chosen folders.
+     * Whether folder artwork (`cover.jpg` beside the tracks) may be read.
      *
-     * Durable here rather than in [com.sertum.player.ui.settings.SettingsStateHolder] because the
-     * scanner needs it and is not a composable. It used to live only in that in-memory holder,
-     * which meant it reset to `false` on every launch - and nothing read it anyway, so the setting
-     * was inert in both directions. See [com.sertum.player.data.scan.LibraryScanner.scanBlocking].
-     *
-     * Off means the library comes from the folders the user added and nowhere else. That is the
-     * whole point of the switch: a reader who never grants it should never have their device
-     * indexed behind their back.
+     * Backed by the same stored key the old "full scan" switch used: it was never a scanning scope
+     * - it gated MediaStore, the only device-wide source, and turning it off emptied the candidate
+     * list, which the next full scan turned into a deleted library. What the grant behind it really
+     * enables is reading files beside the music, so the switch now names that and nothing else.
      */
-    val fullScanEnabled: StateFlow<Boolean> = _fullScanEnabled.asStateFlow()
+    val folderCoversEnabled: StateFlow<Boolean> = _fullScanEnabled.asStateFlow()
 
-    fun setFullScanEnabled(enabled: Boolean) {
+    fun setFolderCoversEnabled(enabled: Boolean) {
         if (_fullScanEnabled.value == enabled) return
         _fullScanEnabled.value = enabled
         prefs.edit().putBoolean(KEY_FULL_SCAN_ENABLED, enabled).apply()
@@ -132,7 +128,7 @@ class AppPreferences(context: Context) {
     companion object {
         const val DEFAULT_SCAN_ON_STARTUP = true
 
-        /** Off unless asked for: nothing is scanned before the reader says so. */
+        /** Off unless asked for: reading beside the music needs the all-files grant. */
         const val DEFAULT_FULL_SCAN_ENABLED = false
 
         /** Dark is the designed default (PRD 7.10); light is the opt-in. */

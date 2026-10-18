@@ -44,6 +44,57 @@ class ScanEngine {
         val toParse: List<ScanCandidate> get() = toAdd + toUpdate
     }
 
+    /**
+     * The split a scan's write phase acts on: the stored rows it keeps untouched, and the URIs it
+     * removes.
+     */
+    data class WritePlan(
+        /** Rows the scan did not rewrite. They are carried into the album rebuild. */
+        val keptUris: Set<String>,
+        /** URIs passed to the delete step of the transaction. Never "the whole table". */
+        val urisToDelete: List<String>,
+    )
+
+    /**
+     * Decides which stored rows survive a scan and which are removed by its transaction.
+     *
+     * A row is kept when the scan did not touch it (an unchanged file), or when it is protected:
+     * its metadata could not be read this time, or the source it came from could not be enumerated
+     * at all (the media permission is missing). A read failure says something about this attempt,
+     * not about the file - an album being copied in, a file the retriever cannot open yet, or a
+     * denied permission would otherwise remove tracks that still exist. That is exactly how the
+     * library was emptied once: a full scan deleted every row and then failed to write back the
+     * ones it could not parse.
+     *
+     * A row is removed when the scan successfully re-read its file (the fresh row is written in the
+     * same transaction; this is also how a CUE rip's one-file row is replaced by the tracks carved
+     * out of it), or when no source reported the file. Absence is only evidence of deletion for a
+     * source that was actually enumerated, which is why [reportedUris] is a parameter rather than
+     * being derived from [reparsedUris].
+     *
+     * URIs, not rows: a CUE rip stores several rows under the same file URI, and the delete step
+     * addresses files.
+     */
+    fun writePlan(
+        existing: List<ExistingTrack>,
+        reportedUris: Set<String>,
+        reparsedUris: Set<String>,
+        protectedUris: Set<String>,
+    ): WritePlan {
+        val kept = LinkedHashSet<String>()
+        val delete = LinkedHashSet<String>()
+        existing.forEach { row ->
+            val keepRow = row.uri in protectedUris ||
+                (row.uri in reportedUris && row.uri !in reparsedUris)
+            if (keepRow) {
+                kept += row.uri
+            } else {
+                delete += row.uri
+            }
+        }
+        return WritePlan(keptUris = kept, urisToDelete = delete.toList())
+    }
+
     fun normalizePath(path: String): String =
         path.trim().replace('\\', '/').trimEnd('/')
 

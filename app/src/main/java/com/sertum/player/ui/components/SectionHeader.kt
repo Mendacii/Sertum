@@ -51,7 +51,7 @@ data class OptionInfo(val nameRes: Int, val descriptionRes: Int)
 object SectionInfo {
     val scanning = listOf(
         OptionInfo(R.string.settings_info_scan_on_startup, R.string.settings_info_scan_on_startup_desc),
-        OptionInfo(R.string.settings_info_full_scan, R.string.settings_info_full_scan_desc),
+        OptionInfo(R.string.settings_info_folder_covers, R.string.settings_info_folder_covers_desc),
         OptionInfo(R.string.settings_info_add_folder, R.string.settings_info_add_folder_desc),
         OptionInfo(R.string.settings_info_rescan, R.string.settings_info_rescan_desc),
     )

@@ -6,10 +6,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <errno.h>
@@ -34,6 +37,39 @@
  *     microframes per second, so 44100 Hz needs 5.5125 frames per microframe. Rounding up every
  *     packet over-delivers by 8.8% and shifts pitch; a phase accumulator spreads the remainder so
  *     the long-term rate stays exact.
+ *
+ * ## Why the handle is a registry key, not a pointer
+ *
+ * A stream is reached from two threads at once, and the old `reinterpret_cast<IsoStream *>(jlong)`
+ * had no answer for that. `Uac2Backend.release()` (audio/backend/Uac2Backend.kt:119) runs on
+ * whichever thread Media3 uses to tear an output down; it calls `releaseStream()` (:157), which
+ * enters `Uac2Session.closeStream` (:64) and from there `nativeStop` + `nativeClose` - the only
+ * place the stream is destroyed. In parallel the playback thread can still be inside `writePcm`
+ * (:70) or `play` (:86), and `stopTransport` (:151) can already have called `nativeStop`. With a
+ * raw pointer in the jlong, `nativeClose` could free the object between `nativeWrite`'s lookup and
+ * its first field access (use-after-free), or join a pump while another thread was starting one on
+ * the same object. The output is also handed to more than one owner - the provider releases every
+ * exclusive output (RoutedAudioOutputProvider.kt:196) and the per-output wrapper releases its
+ * backend (BackendAudioOutput.kt:250) - so the same handle can be closed twice (double free).
+ *
+ * The answer, ported from `aaudio_backend.cpp`:
+ *
+ *  - Handles are monotonic integers keyed into `g_streams`, never reused, so a stale handle can
+ *    only fail to resolve - it can never alias a newer stream.
+ *  - Every entry resolves the handle to a `shared_ptr` under `g_registryMutex` and releases that
+ *    mutex before doing anything else. The object therefore cannot disappear under a call that has
+ *    already found it, and no ioctl or join ever runs while the registry is locked.
+ *  - Each stream has an `io` mutex and a `closed` flag. The JNI entries serialise on `io`, so
+ *    `nativeStart`/`nativeStop`/`nativeWrite`/`nativeFlush`/`nativeStats` never run concurrently
+ *    with each other or with the teardown in `nativeClose`.
+ *  - `nativeClose` erases the entry *first*, then takes `io` and tears the stream down. A repeated
+ *    close finds no entry and returns; a call that already holds the shared_ptr finishes before the
+ *    last reference (and the object) goes away.
+ *
+ * The pump thread is deliberately not part of this protocol: it only reads the facts fixed at open
+ * (fd, endpoint, sizes), the atomics, the URB arrays and the ring (under `ringMutex`), and every
+ * path that frees any of those joins it first. That is also why `nativeClose` may hold `io` across
+ * the join without risking a lock cycle.
  *
  * The alt setting is switched by the caller through Java setInterface: only that path allocates
  * isochronous bandwidth in the xHCI scheduler.
@@ -133,6 +169,17 @@ struct UrbSlot {
 };
 
 struct IsoStream {
+    /**
+     * Serialises the JNI entry points against each other and against nativeClose.
+     *
+     * The pump thread never takes this lock: it only reads the facts fixed at open, the atomics,
+     * the URB arrays and the ring (under ringMutex), and it is joined before any of those are
+     * freed, so holding `io` across that join cannot deadlock.
+     */
+    std::mutex io;
+    /** Set under `io` once the registry entry is gone and teardown has started. */
+    bool closed = false;
+
     int fd = -1;
     int endpoint = 0;
     int sampleRate = 0;
@@ -200,10 +247,39 @@ struct IsoStream {
     std::atomic<long long> maxGapUs{0};
     std::chrono::steady_clock::time_point lastReap = std::chrono::steady_clock::now();
     std::atomic<int> lastError{0};
+
+    /**
+     * Safety net for a stream that never reached nativeClose: the failure paths inside nativeOpen,
+     * and any future caller that drops a handle without closing it. Out of line because it uses the
+     * teardown/release helpers defined below.
+     */
+    ~IsoStream();
 };
 
-IsoStream *fromHandle(jlong handle) {
-    return reinterpret_cast<IsoStream *>(handle);
+/**
+ * The live streams, keyed by integer handle.
+ *
+ * A handle is never a pointer and never reused: the old `jlong`-as-IsoStream* let nativeClose and
+ * nativeWrite race on the same object, and let a second release free it twice. See the file header
+ * for the full race path.
+ */
+std::unordered_map<jlong, std::shared_ptr<IsoStream>> g_streams;
+std::mutex g_registryMutex;
+/** Starts at 1, so 0 keeps meaning "no stream" to the Kotlin side. */
+std::atomic<jlong> g_nextHandle{1};
+
+/**
+ * Resolves a handle. The returned shared_ptr keeps the stream alive for the whole JNI call even if
+ * nativeClose erases the entry on another thread immediately afterwards.
+ *
+ * Only this lookup takes the registry mutex; it is released before any ioctl, join or stream field
+ * is touched.
+ */
+std::shared_ptr<IsoStream> findStream(jlong handle) {
+    if (handle <= 0) return nullptr;
+    std::lock_guard<std::mutex> lock(g_registryMutex);
+    auto it = g_streams.find(handle);
+    return it == g_streams.end() ? nullptr : it->second;
 }
 
 /** Errors that mean the device is gone rather than this call being wrong. */
@@ -456,6 +532,48 @@ void teardown(IsoStream *stream) {
     }
 }
 
+/**
+ * Frees the URBs and the duplicated descriptor.
+ *
+ * Caller holds stream->io (or owns the stream exclusively, as the destructor does). Idempotent:
+ * every pointer is nulled and the fd reset, so nativeClose followed by the destructor cannot free
+ * the same allocation twice. The kernel can still own a URB that the best-effort discard above did
+ * not reap; that is pre-existing behaviour and is unchanged here.
+ */
+void releaseResources(IsoStream *stream) {
+    for (auto &slot : stream->slots) {
+        slot.inFlight.store(false);
+        free(slot.urb);
+        free(slot.pcm);
+        slot.urb = nullptr;
+        slot.pcm = nullptr;
+        slot.capacity = 0;
+    }
+    stream->slots.clear();
+    for (auto &slot : stream->feedbackSlots) {
+        slot.inFlight.store(false);
+        free(slot.urb);
+        free(slot.pcm);
+        slot.urb = nullptr;
+        slot.pcm = nullptr;
+        slot.capacity = 0;
+    }
+    stream->feedbackSlots.clear();
+    if (stream->fd >= 0) {
+        close(stream->fd);
+        stream->fd = -1;
+    }
+}
+
+IsoStream::~IsoStream() {
+    // The pump thread never holds a shared_ptr, so it is the one reader that can still be inside
+    // this object when the last reference goes away (a handle dropped without close). Stop and join
+    // it before any member it touches is freed. The mutex is not taken: no caller holds a
+    // reference, so only the pump is left, and teardown's join is what orders against it.
+    if (running.load() || pump.joinable()) teardown(this);
+    releaseResources(this);
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -467,12 +585,11 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
              usbFd, endpoint, sampleRate, channels, subslotBytes);
         return 0;
     }
-    auto *stream = new IsoStream();
+    auto stream = std::make_shared<IsoStream>();
     stream->fd = dup(usbFd);
     if (stream->fd < 0) {
         LOGE("dup failed: errno=%d %s", errno, strerror(errno));
-        delete stream;
-        return 0;
+        return 0;  // the destructor closes the fd and frees whatever was already allocated
     }
     stream->endpoint = endpoint;
     stream->sampleRate = sampleRate;
@@ -496,13 +613,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
         slot.capacity = bytesPerUrb;
         if (slot.urb == nullptr || slot.pcm == nullptr) {
             LOGE("URB allocation failed");
-            for (auto &s : stream->slots) {
-                free(s.urb);
-                free(s.pcm);
-            }
-            close(stream->fd);
-            delete stream;
-            return 0;
+            return 0;  // the destructor closes the fd and frees every slot
         }
     }
     // Two feedback slots: the device reports every interval, and one in flight is too easy to miss.
@@ -525,23 +636,37 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
             }
         }
     }
-    LOGI("open fd=%d ep=0x%02X feedback=0x%02X rate=%d ch=%d subslot=%d maxPacket=%u urb=%zuB depth=%d",
-         stream->fd, endpoint, feedbackEndpoint, sampleRate, channels, subslotBytes,
-         stream->maxPacketBytes, bytesPerUrb, kUrbsInFlight);
-    return reinterpret_cast<jlong>(stream);
+    // Registered last: everything above can fail without a handle ever escaping, and no ioctl runs
+    // under the registry mutex.
+    const jlong handle = g_nextHandle.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lock(g_registryMutex);
+        g_streams[handle] = stream;
+    }
+    LOGI("open handle=%lld fd=%d ep=0x%02X feedback=0x%02X rate=%d ch=%d subslot=%d "
+         "maxPacket=%u urb=%zuB depth=%d",
+         static_cast<long long>(handle), stream->fd, endpoint, feedbackEndpoint, sampleRate,
+         channels, subslotBytes, stream->maxPacketBytes, bytesPerUrb, kUrbsInFlight);
+    return handle;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, jlong handle) {
-    IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr) return JNI_FALSE;
+    auto stream = findStream(handle);
+    if (!stream) return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(stream->io);
+    if (stream->closed) return JNI_FALSE;
     // Idempotent on purpose. Reporting failure for an already-running stream left the caller
     // believing it had to retry, and every retry failed the same way - which is how the player ended
     // up stuck buffering with the transport filling silence underneath it.
     if (stream->running.load()) return JNI_TRUE;
     if (stream->dead.load()) return JNI_FALSE;
+    // The pump can leave `running` false on its own when usbfs fails mid-stream, and only stop or
+    // close joins it. Starting again on top of that joinable thread would make the assignment below
+    // call std::terminate, so reap the finished thread first.
+    if (stream->pump.joinable()) stream->pump.join();
     for (auto &slot : stream->slots) {
-        if (!submitSlot(stream, slot)) {
+        if (!submitSlot(stream.get(), slot)) {
             // Roll back what did go out, so a failed start leaves no half-queued stream behind.
             for (auto &other : stream->slots) {
                 if (other.inFlight.exchange(false)) ioctl(stream->fd, USBDEVFS_DISCARDURB, other.urb);
@@ -551,22 +676,34 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, j
         }
     }
     for (auto &slot : stream->feedbackSlots) {
-        submitFeedbackSlot(stream, slot);
+        submitFeedbackSlot(stream.get(), slot);
     }
     // The gap metric measures stalls within a run; without this reset it would count the pause
     // between two runs as a two-second freeze.
     stream->lastReap = std::chrono::steady_clock::now();
     stream->running.store(true);
-    stream->pump = std::thread(pumpLoop, stream);
+    try {
+        stream->pump = std::thread(pumpLoop, stream.get());
+    } catch (...) {
+        // Thread creation can fail under memory pressure (EAGAIN). Leaving `running` true would make
+        // every later start answer "already running" with no pump behind it, so roll back to the
+        // stopped state and discard the URBs that were just queued.
+        stream->running.store(false);
+        teardown(stream.get());
+        LOGE("pump thread creation failed");
+        return JNI_FALSE;
+    }
     LOGI("started: %d URBs x %d packets", kUrbsInFlight, kPacketsPerUrb);
     return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStop(JNIEnv *, jobject, jlong handle) {
-    IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr) return;
-    teardown(stream);
+    auto stream = findStream(handle);
+    if (!stream) return;
+    std::lock_guard<std::mutex> lock(stream->io);
+    if (stream->closed) return;
+    teardown(stream.get());
     LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld primed=%lld "
          "underruns=%lld feedback=%lld ratePpm=%d maxGapUs=%lld",
          stream->submitted.load(), stream->completed.load(), stream->failed.load(),
@@ -576,27 +713,33 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStop(JNIEnv *, jobject, jl
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeClose(JNIEnv *, jobject, jlong handle) {
-    IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr) return;
-    if (stream->running.load() || stream->pump.joinable()) teardown(stream);
-    for (auto &slot : stream->slots) {
-        free(slot.urb);
-        free(slot.pcm);
+    std::shared_ptr<IsoStream> stream;
+    {
+        std::lock_guard<std::mutex> registryLock(g_registryMutex);
+        auto it = g_streams.find(handle);
+        if (it == g_streams.end()) return;
+        stream = it->second;
+        // Erased before the stream lock is taken: no new caller can resolve this handle while it is
+        // being torn down, and a second close finds nothing and returns.
+        g_streams.erase(it);
     }
-    for (auto &slot : stream->feedbackSlots) {
-        free(slot.urb);
-        free(slot.pcm);
-    }
-    if (stream->fd >= 0) close(stream->fd);
-    delete stream;
+    std::lock_guard<std::mutex> lock(stream->io);
+    if (stream->closed) return;
+    stream->closed = true;
+    teardown(stream.get());
+    releaseResources(stream.get());
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
     JNIEnv *env, jobject, jlong handle, jbyteArray data, jint offset, jint length) {
-    IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr || data == nullptr || offset < 0 || length <= 0) return -1;
+    auto stream = findStream(handle);
+    if (!stream || data == nullptr || offset < 0 || length <= 0) return -1;
     if (offset + length > env->GetArrayLength(data)) return -1;
+    // One entry at a time per stream. A close that races this call waits for the bounded ring wait
+    // below before it can tear the stream down, so the wait is capped on purpose.
+    std::lock_guard<std::mutex> lock(stream->io);
+    if (stream->closed) return -1;
     // -1 is "bad call", 0 is "ring full"; -2 tells the backend the device is gone.
     if (stream->dead.load()) return -2;
     std::vector<uint8_t> chunk(static_cast<size_t>(length));
@@ -604,9 +747,9 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
     // Wait briefly for room instead of answering "zero frames" immediately: Media3 retries a zero
     // return in a tight loop, and that spin was a large part of why playing in exclusive mode cost
     // twice the CPU of the standard route.
-    std::unique_lock<std::mutex> lock(stream->ringMutex);
+    std::unique_lock<std::mutex> ringLock(stream->ringMutex);
     if (stream->ring.space() == 0 && !stream->dead.load()) {
-        stream->ringSpace.wait_for(lock, std::chrono::milliseconds(5));
+        stream->ringSpace.wait_for(ringLock, std::chrono::milliseconds(5));
     }
     const size_t take = stream->ring.push(chunk.data(), chunk.size());
     return static_cast<jint>(take);
@@ -614,10 +757,12 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, jlong handle) {
-    IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr) return;
+    auto stream = findStream(handle);
+    if (!stream) return;
+    std::lock_guard<std::mutex> lock(stream->io);
+    if (stream->closed) return;
     // Seeking: drop queued audio so the next microframe carries the new position, not the old one.
-    std::lock_guard<std::mutex> lock(stream->ringMutex);
+    std::lock_guard<std::mutex> ringLock(stream->ringMutex);
     stream->ring.head = stream->ring.tail = stream->ring.count = 0;
     // A seek restarts the stream at a new position, so the silence that follows is priming again,
     // not a mid-stream dropout.
@@ -626,20 +771,23 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
-    IsoStream *stream = fromHandle(handle);
+    auto stream = findStream(handle);
     jlong values[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    if (stream != nullptr) {
-        values[0] = stream->submitted.load();
-        values[1] = stream->completed.load();
-        values[2] = stream->failed.load();
-        values[3] = stream->framesSent.load();
-        values[4] = stream->lastError.load();
-        values[5] = stream->underruns.load();
-        values[6] = stream->feedbackSeen.load();
-        values[7] = stream->feedbackPpm.load();
-        values[8] = stream->primed.load();
-        values[9] = stream->dead.load() ? 1 : 0;
-        values[10] = stream->maxGapUs.load();
+    if (stream) {
+        std::lock_guard<std::mutex> lock(stream->io);
+        if (!stream->closed) {
+            values[0] = stream->submitted.load();
+            values[1] = stream->completed.load();
+            values[2] = stream->failed.load();
+            values[3] = stream->framesSent.load();
+            values[4] = stream->lastError.load();
+            values[5] = stream->underruns.load();
+            values[6] = stream->feedbackSeen.load();
+            values[7] = stream->feedbackPpm.load();
+            values[8] = stream->primed.load();
+            values[9] = stream->dead.load() ? 1 : 0;
+            values[10] = stream->maxGapUs.load();
+        }
     }
     jlongArray result = env->NewLongArray(11);
     if (result != nullptr) env->SetLongArrayRegion(result, 0, 11, values);

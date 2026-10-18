@@ -23,7 +23,14 @@ class MediaStoreSource(private val context: Context) {
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val result = mutableListOf<ScanCandidate>()
-        context.contentResolver.query(collection, projection, selection, null, null)?.use { cursor ->
+        // A null cursor means the query failed, not that the device holds no music. Returning an
+        // empty list here would tell the scanner that every stored track had been deleted, and a
+        // full scan would act on that. Failing instead aborts the scan and leaves the library as
+        // it was.
+        val cursor = checkNotNull(
+            context.contentResolver.query(collection, projection, selection, null, null),
+        ) { "MediaStore audio query returned no cursor" }
+        cursor.use {
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val dataCol = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
             val relCol = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)

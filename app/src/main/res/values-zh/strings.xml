@@ -58,7 +58,7 @@
     <string name="settings_scanning">扫描</string>
     <!-- 设置网格用的短标签；上面那组长标题只在确实需要成句的地方保留 -->
     <string name="settings_scan_on_startup_short">启动时扫描</string>
-    <string name="settings_full_scan_short">全盘扫描</string>
+    <string name="settings_folder_covers_short">文件夹封面</string>
     <string name="settings_add_folder_short">添加文件夹</string>
     <string name="settings_incremental_scan_short">增量扫描</string>
     <string name="settings_rescan_short">重新扫描</string>
@@ -93,8 +93,8 @@
     <!-- 分节说明弹窗：每个标题右边 (i) 里的逐项解释 -->
     <string name="settings_info_scan_on_startup">启动时扫描</string>
     <string name="settings_info_scan_on_startup_desc">每次启动 App 都重新扫描曲库。关掉后只在手动扫描或添加目录后扫描。</string>
-    <string name="settings_info_full_scan">全盘扫描</string>
-    <string name="settings_info_full_scan_desc">扫描系统已索引的全部音频，而不只是你添加的文件夹。关闭时只扫描已添加的文件夹，没有添加文件夹则不入库。默认关闭。</string>
+    <string name="settings_info_folder_covers">文件夹封面</string>
+    <string name="settings_info_folder_covers_desc">读取与音乐放在同一目录的封面图片（cover.jpg 等）。需要系统「所有文件访问」权限；关闭时专辑封面回退到内嵌图片或占位图。默认关闭。</string>
     <string name="settings_info_add_folder">添加文件夹</string>
     <string name="settings_info_add_folder_desc">选择一个音乐文件夹，授予长期读取权限。已添加的目录会列在下方，可以逐个移除。</string>
     <string name="settings_info_rescan">重新扫描</string>
