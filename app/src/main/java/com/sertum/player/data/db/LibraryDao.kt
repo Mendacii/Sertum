@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -66,6 +67,21 @@ interface LibraryDao {
     @Upsert
     suspend fun upsertArtist(artist: ArtistEntity)
 
+    /**
+     * Bulk forms, used by the scan's write phase.
+     *
+     * A scan writes 1,400-odd rows; calling the single-row form in a loop pays Room's per-call
+     * overhead 1,400 times. With a list, Room prepares the statement once and binds it per row.
+     */
+    @Upsert
+    suspend fun upsertTracks(tracks: List<TrackEntity>)
+
+    @Upsert
+    suspend fun upsertAlbums(albums: List<AlbumEntity>)
+
+    @Upsert
+    suspend fun upsertArtists(artists: List<ArtistEntity>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCover(cover: CoverEntity)
 
@@ -103,4 +119,52 @@ interface LibraryDao {
 
     @Query("SELECT uri FROM tracks")
     suspend fun allTrackUris(): List<String>
+
+    /** Every stored track, for the incremental scan's diff against what the sources report. */
+    @Query("SELECT * FROM tracks")
+    suspend fun allTracks(): List<TrackEntity>
+
+    @Query("SELECT * FROM albums")
+    suspend fun allAlbums(): List<AlbumEntity>
+
+    @Query("DELETE FROM tracks WHERE uri IN (:uris)")
+    suspend fun deleteTracksByUris(uris: List<String>)
+
+    /**
+     * Writes one scan's result as a single transaction.
+     *
+     * The scan used to write row by row: a library of 1,352 tracks meant 1,352 insert transactions
+     * plus the album and artist rows, each of which commits to disk on its own. A transaction turns
+     * that into one commit, and - just as importantly - means a cancellation or a crash mid-scan
+     * leaves the previous library in place instead of a half-written one.
+     *
+     * [deleteAllSources] rewrites the table (full scan); otherwise only [urisToDelete] goes, which
+     * is what an incremental scan touches: the files it re-read and the files that vanished.
+     */
+    @Transaction
+    suspend fun applyLibrary(
+        deleteAllSources: Boolean,
+        urisToDelete: List<String>,
+        tracks: List<TrackEntity>,
+        albums: List<AlbumEntity>,
+        artists: List<ArtistEntity>,
+    ) {
+        if (deleteAllSources) {
+            deleteTracksBySource(SourceType.MEDIA_STORE)
+            deleteTracksBySource(SourceType.SAF)
+        }
+        // Chunked: SQLite binds at most 999 variables per statement, and a full-library delete list
+        // is far longer than that.
+        urisToDelete.chunked(SQLITE_MAX_VARIABLES).forEach { deleteTracksByUris(it) }
+        if (tracks.isNotEmpty()) upsertTracks(tracks)
+        clearAlbumsAndArtistsAlbums()
+        clearAlbumsAndArtistsArtists()
+        if (albums.isNotEmpty()) upsertAlbums(albums)
+        if (artists.isNotEmpty()) upsertArtists(artists)
+    }
+
+    companion object {
+        /** Conservative against SQLite's 999-variable limit, leaving room for the query's own. */
+        const val SQLITE_MAX_VARIABLES = 500
+    }
 }

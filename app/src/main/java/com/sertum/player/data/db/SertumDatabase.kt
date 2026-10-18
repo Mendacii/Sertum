@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ArtistEntity::class,
         CoverEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class SertumDatabase : RoomDatabase() {
@@ -114,6 +114,22 @@ abstract class SertumDatabase : RoomDatabase() {
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS `playback_positions`")
+            }
+        }
+
+        /**
+         * Records the file's size and modification time, so a scan can tell whether a file needs
+         * re-reading without reading it.
+         *
+         * Both default to 0, which is the safe direction: the incremental scan treats any mismatch
+         * as changed, so every existing row re-parses once after the upgrade and is recorded
+         * properly, rather than the diff deciding nothing changed when it has no evidence either
+         * way. That first pass costs what a full scan costs; every one after it does not.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN sizeBytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tracks ADD COLUMN modifiedAtEpochMs INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

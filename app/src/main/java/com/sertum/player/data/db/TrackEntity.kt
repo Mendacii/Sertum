@@ -49,4 +49,14 @@ data class TrackEntity(
     val source: SourceType,
     val coverRef: String?,
     val isPlayable: Boolean,
+    /**
+     * The file's size and modification time when it was last read.
+     *
+     * Kept so an incremental scan can decide whether a file needs re-reading without opening it:
+     * comparing these against what the source reports is what makes the difference between a
+     * scan that reads 1,352 files and one that reads three. Zero means "not recorded" - rows
+     * written before the columns existed - and is treated as changed, so they are filled in once.
+     */
+    val sizeBytes: Long = 0L,
+    val modifiedAtEpochMs: Long = 0L,
 )
