@@ -499,6 +499,7 @@ class PlaybackCoordinator(
             if (
                 exclusiveBackend.capabilities.isExclusive &&
                 streamIsOnUsbDevice() &&
+                engine.router.isSourceDepthPreserved() &&
                 systemMusicVolume01() >= 1f
             ) {
                 BitPerfectState.INTACT

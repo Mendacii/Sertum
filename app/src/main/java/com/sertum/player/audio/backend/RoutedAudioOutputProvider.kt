@@ -58,6 +58,15 @@ class RoutedAudioOutputProvider(context: Context) :
 
     private val exclusiveOutputs = java.util.concurrent.CopyOnWriteArrayList<BackendAudioOutput>()
 
+    /**
+     * Whether the current source's bit depth survives the route.
+     *
+     * Delivering 24 bits to a 32-bit source is a real conversion, so the badge must not call that
+     * route bit-perfect. Nothing in the library is 32-bit today; this keeps the claim honest if one
+     * ever is.
+     */
+    fun isSourceDepthPreserved(): Boolean = depthIsPreserved(pendingSourceBitDepth)
+
     private fun isExclusiveRoute(): Boolean =
         exclusiveEnabled && exclusiveBackend != null && usbDeviceId() != null
 
@@ -80,13 +89,15 @@ class RoutedAudioOutputProvider(context: Context) :
     ): androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport {
         if (!isExclusiveRoute()) return super.getFormatSupport(formatConfig)
         val pcmEncoding = formatConfig.format.pcmEncoding
+        // Recorded for every format, raw PCM included: what the route can deliver is 24-bit at
+        // most, and a 32-bit source is packed down rather than passed through.
+        when (pcmEncoding) {
+            C.ENCODING_PCM_16BIT -> pendingSourceBitDepth = 16
+            C.ENCODING_PCM_24BIT -> pendingSourceBitDepth = 24
+            C.ENCODING_PCM_32BIT -> pendingSourceBitDepth = 32
+        }
         if (formatConfig.format.sampleMimeType != MimeTypes.AUDIO_RAW) {
             pendingSourceMimeType = formatConfig.format.sampleMimeType
-            when (pcmEncoding) {
-                C.ENCODING_PCM_16BIT -> pendingSourceBitDepth = 16
-                C.ENCODING_PCM_24BIT -> pendingSourceBitDepth = 24
-                C.ENCODING_PCM_32BIT -> pendingSourceBitDepth = 24
-            }
         }
         // Direct support only for raw PCM families the AAudio backend
         // consumes. Compressed formats carry pcmEncoding metadata too

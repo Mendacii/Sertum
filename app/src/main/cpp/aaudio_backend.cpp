@@ -2,6 +2,8 @@
 #include <android/log.h>
 #include <jni.h>
 #include <atomic>
+#include <chrono>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -9,9 +11,28 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 
-static std::unordered_map<jlong, AAudioStream *> g_streams;
+/**
+ * One open stream plus the lock that keeps its lifetime honest.
+ *
+ * Falling back to a raw `AAudioStream*` in a map meant every call could be holding a pointer that
+ * `nativeClose` was about to free: Media3 releases the output from whichever thread is tearing the
+ * player down while the renderer thread may still be inside a write. Entries are held through a
+ * shared_ptr, so the pointer cannot disappear underneath a caller, and `io` serialises the calls
+ * against a stream so only one of them is ever inside it.
+ */
+struct StreamEntry {
+    AAudioStream *stream = nullptr;
+    std::mutex io;
+    bool closed = false;
+};
+
+static std::unordered_map<jlong, std::shared_ptr<StreamEntry>> g_streams;
 static std::mutex g_mu;
 static std::atomic<jlong> g_next{1};
+
+/** How long one write may block before reporting backpressure, and the budget for the whole call. */
+static constexpr int64_t kWriteSliceMs = 20;
+static constexpr int64_t kWriteBudgetMs = 200;
 
 static aaudio_format_t formatForBits(int bits) {
     return bits >= 24 ? AAUDIO_FORMAT_PCM_I24_PACKED : AAUDIO_FORMAT_PCM_I16;
@@ -20,6 +41,13 @@ static aaudio_format_t formatForBits(int bits) {
 static int bytesPerFrame(AAudioStream *stream) {
     const int bytes = AAudioStream_getFormat(stream) == AAUDIO_FORMAT_PCM_I24_PACKED ? 3 : 2;
     return bytes * AAudioStream_getChannelCount(stream);
+}
+
+/** Finds an entry; the returned shared_ptr keeps it alive even if close runs next. */
+static std::shared_ptr<StreamEntry> findEntry(jlong handle) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto it = g_streams.find(handle);
+    return it == g_streams.end() ? nullptr : it->second;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -56,10 +84,12 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
         return 0;
     }
 
+    auto entry = std::make_shared<StreamEntry>();
+    entry->stream = stream;
     const jlong handle = g_next.fetch_add(1);
     {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_streams[handle] = stream;
+        g_streams[handle] = entry;
     }
     LOGI("open handle=%lld rate=%d actual=%d format=%d sharing=%d device=%d",
          static_cast<long long>(handle), sampleRate,
@@ -68,44 +98,54 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
     return handle;
 }
 
-static AAudioStream *find(jlong handle) {
-    std::lock_guard<std::mutex> lock(g_mu);
-    auto it = g_streams.find(handle);
-    return it == g_streams.end() ? nullptr : it->second;
-}
-
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeStart(JNIEnv *, jobject, jlong handle) {
-    AAudioStream *stream = find(handle);
-    return stream != nullptr && AAudioStream_requestStart(stream) == AAUDIO_OK;
+    auto entry = findEntry(handle);
+    if (!entry) return false;
+    std::lock_guard<std::mutex> lock(entry->io);
+    if (entry->closed) return false;
+    return AAudioStream_requestStart(entry->stream) == AAUDIO_OK;
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeWrite(
     JNIEnv *env, jobject, jlong handle, jbyteArray data, jint offset, jint length) {
-    AAudioStream *stream = find(handle);
-    if (stream == nullptr) return -1;
+    auto entry = findEntry(handle);
+    if (!entry) return -1;
     jbyte *buf = env->GetByteArrayElements(data, nullptr);
     if (buf == nullptr) return -2;
-    const int frameBytes = bytesPerFrame(stream);
-    if (frameBytes <= 0) {
-        env->ReleaseByteArrayElements(data, buf, JNI_ABORT);
-        return -3;
-    }
-    const int frames = length / frameBytes;
+
     int framesWritten = 0;
-    while (framesWritten < frames) {
-        const aaudio_result_t w = AAudioStream_write(
-            stream, reinterpret_cast<const void *>(buf + offset + framesWritten * frameBytes),
-            frames - framesWritten, 20 * 1000 * 1000);
-        if (w <= 0) {
-            // A short timeout lets the HAL drain a burst before we report
-            // backpressure; a 0-frame result is returned to the Java side so
-            // Media3 retries instead of busy-looping.
-            framesWritten = framesWritten == 0 ? static_cast<int>(w) : framesWritten;
-            break;
+    {
+        std::lock_guard<std::mutex> lock(entry->io);
+        if (entry->closed) {
+            env->ReleaseByteArrayElements(data, buf, JNI_ABORT);
+            return -1;
         }
-        framesWritten += w;
+        const int frameBytes = bytesPerFrame(entry->stream);
+        if (frameBytes <= 0) {
+            env->ReleaseByteArrayElements(data, buf, JNI_ABORT);
+            return -3;
+        }
+        const int frames = length / frameBytes;
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(kWriteBudgetMs);
+        while (framesWritten < frames) {
+            const aaudio_result_t w = AAudioStream_write(
+                entry->stream,
+                reinterpret_cast<const void *>(buf + offset + framesWritten * frameBytes),
+                frames - framesWritten,
+                kWriteSliceMs * 1000 * 1000);
+            if (w <= 0) {
+                // A short timeout lets the HAL drain a burst before we report backpressure; a
+                // 0-frame result goes back to Java so Media3 retries instead of busy-looping.
+                framesWritten = framesWritten == 0 ? static_cast<int>(w) : framesWritten;
+                break;
+            }
+            framesWritten += w;
+            // Bounded overall: a stuck HAL must not hold this lock, because close waits for it.
+            if (std::chrono::steady_clock::now() >= deadline) break;
+        }
     }
     env->ReleaseByteArrayElements(data, buf, JNI_ABORT);
     return framesWritten;
@@ -113,29 +153,47 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeWrite(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativePause(JNIEnv *, jobject, jlong handle) {
-    AAudioStream *stream = find(handle);
-    return stream != nullptr && AAudioStream_requestPause(stream) == AAUDIO_OK;
+    auto entry = findEntry(handle);
+    if (!entry) return false;
+    std::lock_guard<std::mutex> lock(entry->io);
+    if (entry->closed) return false;
+    return AAudioStream_requestPause(entry->stream) == AAUDIO_OK;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeFlush(JNIEnv *, jobject, jlong handle) {
-    AAudioStream *stream = find(handle);
-    return stream != nullptr && AAudioStream_requestFlush(stream) == AAUDIO_OK;
+    auto entry = findEntry(handle);
+    if (!entry) return false;
+    std::lock_guard<std::mutex> lock(entry->io);
+    if (entry->closed) return false;
+    return AAudioStream_requestFlush(entry->stream) == AAUDIO_OK;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeStop(JNIEnv *, jobject, jlong handle) {
-    AAudioStream *stream = find(handle);
-    return stream != nullptr && AAudioStream_requestStop(stream) == AAUDIO_OK;
+    auto entry = findEntry(handle);
+    if (!entry) return false;
+    std::lock_guard<std::mutex> lock(entry->io);
+    if (entry->closed) return false;
+    return AAudioStream_requestStop(entry->stream) == AAUDIO_OK;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_sertum_player_audio_backend_AaudioNative_nativeClose(JNIEnv *, jobject, jlong handle) {
-    AAudioStream *stream = find(handle);
-    if (stream != nullptr) {
-        AAudioStream_close(stream);
+    std::shared_ptr<StreamEntry> entry;
+    {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_streams.erase(handle);
+        auto it = g_streams.find(handle);
+        if (it == g_streams.end()) return;
+        entry = it->second;
+        // Erased first so no new caller can find this stream while it is being closed.
+        g_streams.erase(it);
+    }
+    std::lock_guard<std::mutex> lock(entry->io);
+    if (!entry->closed) {
+        entry->closed = true;
+        AAudioStream_close(entry->stream);
+        entry->stream = nullptr;
     }
 }
 
@@ -143,8 +201,11 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeClose(JNIEnv *, jobject,
     extern "C" JNIEXPORT TYPE JNICALL                                             \
     Java_com_sertum_player_audio_backend_AaudioNative_nativeGet##NAME(            \
         JNIEnv *, jobject, jlong handle) {                                        \
-        AAudioStream *stream = find(handle);                                      \
-        return stream == nullptr ? 0 : static_cast<TYPE>(CALL(stream));           \
+        auto entry = findEntry(handle);                                           \
+        if (!entry) return 0;                                                     \
+        std::lock_guard<std::mutex> lock(entry->io);                              \
+        if (entry->closed || entry->stream == nullptr) return 0;                  \
+        return static_cast<TYPE>(CALL(entry->stream));                            \
     }
 
 GETTER(ChannelCount, jint, AAudioStream_getChannelCount)
