@@ -370,9 +370,17 @@ class PlaybackCoordinator(
 
     fun onUsbDeviceDetached() {
         if (_outputMode.value != OutputMode.USB_EXCLUSIVE) return
-        diagnostics.log(DiagnosticLevel.WARNING, "usb", "DAC detached; pausing and keeping queue")
         player.pause()
+        // Release the sink that was opened on the device that just left. The queue and the position
+        // survive; the next play opens a fresh output on whatever route is there by then. Preparing
+        // here instead would race the audio system still tearing the old route down.
+        player.stop()
+        // Fall back rather than hold the mode: with the DAC gone, "USB exclusive" describes a device
+        // that is not attached, and the badge would be a claim the audio path cannot back.
+        _outputMode.value = OutputMode.STANDARD
+        engine.router.exclusiveEnabled = false
         _usbRecovery.value = UsbRecoveryState.DETACHED
+        diagnostics.log(DiagnosticLevel.WARNING, "usb", "DAC detached; paused, queue kept, route back to standard")
         updateUiState()
     }
 
@@ -381,6 +389,9 @@ class PlaybackCoordinator(
         // plugging it in is enough - and because the hotplug controller reports the devices already
         // present at startup, a launch with the DAC connected lands on the exclusive route too.
         if (_outputMode.value != OutputMode.USB_EXCLUSIVE) {
+            // Any detach state is settled the moment a DAC is back: either the route switches to
+            // exclusive below, or it stays standard because the preference is off.
+            _usbRecovery.value = UsbRecoveryState.NONE
             if (
                 shouldAutoSwitchToExclusive(
                     autoSwitchEnabled = SettingsStateHolder.state.value.autoExclusiveOnUsbAttach,
@@ -391,7 +402,7 @@ class PlaybackCoordinator(
                 diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; selecting USB exclusive")
                 switchOutputMode(OutputMode.USB_EXCLUSIVE)
             }
-            diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; route left as $(_outputMode.value)")
+            diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; route left as ${_outputMode.value}")
             // The switch stopped and re-prepared on its own; there is no detach to recover from.
             return
         }
