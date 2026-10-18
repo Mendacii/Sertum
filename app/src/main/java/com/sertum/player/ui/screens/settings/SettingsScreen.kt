@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
@@ -149,6 +150,12 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 icon = Icons.Filled.Refresh,
                 emphasis = TileEmphasis.NAVIGABLE,
                 onClick = { app.requestLibraryScan() },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_incremental_scan_short),
+                icon = Icons.Filled.Add,
+                emphasis = TileEmphasis.NAVIGABLE,
+                onClick = { app.requestIncrementalScan() },
             )
         }
         safDirs.forEach { uri ->

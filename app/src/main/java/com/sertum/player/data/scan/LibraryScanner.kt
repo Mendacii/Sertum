@@ -31,6 +31,9 @@ data class ScanStats(
     val failed: Int,
     val albums: Int,
     val artists: Int,
+    /** Files the sources reported that the library already had, unchanged. */
+    val unchanged: Int = 0,
+    val incremental: Boolean = false,
 )
 
 data class ScanProgress(
@@ -95,36 +98,43 @@ class LibraryScanner(
         val embeddedPicture: ByteArray?,
     )
 
-    fun scanNow(onDone: (Result<ScanStats>) -> Unit = {}) {
+    fun scanNow(incremental: Boolean = false, onDone: (Result<ScanStats>) -> Unit = {}) {
         _progress.value = ScanProgress(phase = "collecting")
         scope.launch {
-            onDone(runCatching { scanBlocking() })
+            val result = runCatching { scanBlocking(incremental) }
+            // A scan that throws used to leave the progress at "parsing" and the settings page
+            // saying it was still scanning, forever - a failure looked exactly like a scan that
+            // never ends. The phase is moved off the in-progress values either way, so the reader
+            // sees the scan stop and the diagnostics log holds the reason.
+            if (result.isFailure) {
+                _progress.value = ScanProgress(phase = "failed")
+                android.util.Log.e("SertumScan", "scan failed", result.exceptionOrNull())
+            }
+            onDone(result)
         }
     }
 
-    suspend fun scanBlocking(): ScanStats {
-        // Timed so the cost of what the parse loop reads can be measured rather than argued
-        // about. The per-file metadata extraction added to fill discBand, sampleRate and
-        // bitDepth reads from the header the retriever has already parsed, so it is expected
-        // to be free; this is what says whether it is.
+    /**
+     * Walks the sources and writes the result.
+     *
+     * [incremental] decides how much is read. A full scan opens every file and rewrites the
+     * library; an incremental one lists the files, compares size and modification time against the
+     * rows already stored, and opens only what differs. Listing is cheap - 38ms for 1,353 files
+     * from MediaStore - while parsing is 7.5ms a file, so a scan with nothing to do costs the
+     * listing and a database read instead of ten seconds of metadata work.
+     *
+     * Untouched albums are carried over as they were rather than rebuilt, which is not only faster:
+     * their artwork came from an embedded picture or a folder image that this scan never looked at,
+     * so rebuilding them from scratch would have replaced a real cover with the placeholder.
+     */
+    suspend fun scanBlocking(incremental: Boolean = false): ScanStats {
         val startedAt = android.os.SystemClock.elapsedRealtime()
-        // The whole-device source runs only when the reader has switched it on.
-        //
-        // MediaStore is the system's index of every audio file on the phone, so running it
-        // unconditionally meant a library built from the entire device no matter what the
-        // full-scan switch said - the switch was written by the settings screen and read by
-        // nothing, which made it look like a permission the app did not honour. Off now means the
-        // library comes from the chosen folders and nowhere else; with none chosen it is empty,
-        // which is what "scan nothing until I say so" has to mean.
         val fullScan = fullScanEnabled()
         val mediaCandidates = if (fullScan) {
             withContext(Dispatchers.IO) { MediaStoreSource(context).scan() }
         } else {
             emptyList()
         }
-        // The folder walk reports how many files it has found as it goes. Without that the reader
-        // stares at a static "正在扫描文件夹… for the whole enumeration - 21 seconds on a 1,173-file
-        // folder before the walk itself was made single-query-per-directory.
         val safCandidates = safDirectories.load().flatMap { treeUri ->
             runCatching {
                 SafSource().scan(context, treeUri) { found ->
@@ -133,30 +143,36 @@ class LibraryScanner(
             }.getOrDefault(emptyList())
         }
         val candidates = (mediaCandidates + safCandidates).distinctBy { it.uri }
-        _progress.value = ScanProgress(phase = "parsing", candidates = candidates.size)
+        val enumerateMs = android.os.SystemClock.elapsedRealtime() - startedAt
+
+        // Decide what to read before reading anything.
+        val existingTracks = if (incremental) dao.allTracks() else emptyList()
+        val scanPlan = if (incremental) {
+            ScanEngine().plan(
+                existingTracks.map { ExistingTrack(it.uri, it.sizeBytes, it.modifiedAtEpochMs) },
+                candidates,
+            )
+        } else {
+            null
+        }
+        val toParse = scanPlan?.toParse ?: candidates
+        val removedUris = scanPlan?.toDeleteUris.orEmpty()
+        val reparsedUris = toParse.map { it.uri }.toSet()
+
+        _progress.value = ScanProgress(phase = "parsing", candidates = toParse.size)
         val parseStartedAt = android.os.SystemClock.elapsedRealtime()
         var parsed = 0
         var failed = 0
         val parsedTracks = mutableListOf<ParsedTrack>()
-        // Keep at most one extracted cover per album. Storing every track's
-        // embedded picture while scanning a large library exhausts the heap.
         val embeddedPaths = mutableMapOf<String, String?>()
-        // Concurrent, because the parse loop now runs several files at a time: this is what
-        // decides which track of an album pays for the embedded picture.
         val embeddedAttempted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-        // Parsing is one metadata read per file, and most of that is waiting on the content
-        // provider rather than using the CPU - so the wait is overlapped instead of paid once per
-        // file. Measured on a 1,173-file SAF folder: 34.8s one file at a time.
         val workers = PARSE_WORKERS.coerceAtMost(Runtime.getRuntime().availableProcessors())
-        candidates.chunked(workers * PARSE_CHUNKS_PER_WORKER).forEach { chunk ->
+        toParse.chunked(workers * PARSE_CHUNKS_PER_WORKER).forEach { chunk ->
             val results = coroutineScope {
                 chunk.map { candidate ->
                     async(Dispatchers.IO) { runCatching { parse(candidate, embeddedAttempted) }.getOrNull() }
                 }.awaitAll()
             }
-            // Applied here, in chunk order, on this coroutine: the tracks keep the order the
-            // sources produced and the album grouping downstream stays deterministic. Cover files
-            // are written here too, so writes stay single-threaded.
             results.forEach { result ->
                 val parsedTrack = result?.parsed
                 if (parsedTrack == null) {
@@ -173,37 +189,55 @@ class LibraryScanner(
                     }
                 }
             }
-            _progress.value = ScanProgress("parsing", candidates.size, parsed, failed)
+            _progress.value = ScanProgress("parsing", toParse.size, parsed, failed)
         }
-        // A single-file disc rip is one track at this point: the file parses as a whole. Where a
-        // CUE sheet says what is inside it, that one track is replaced by the tracks the sheet
-        // describes, so the disc becomes playable as separate tracks. Done before anything is
-        // written or grouped, so every count downstream - the album's track count, the album
-        // list - reflects the split rather than the file.
         val expandedTracks = applyCueSheets(parsedTracks, CueSource(context))
-        val tracks = expandedTracks.map { it.track }
+        val parseMs = android.os.SystemClock.elapsedRealtime() - parseStartedAt
 
-        dao.deleteTracksBySource(SourceType.MEDIA_STORE)
-        dao.deleteTracksBySource(SourceType.SAF)
-        tracks.forEach { dao.upsertTrack(it) }
+        val applyStartedAt = android.os.SystemClock.elapsedRealtime()
+        // Which album keys this scan has evidence about. Everything else is left alone.
+        val affectedUris = reparsedUris + removedUris.toSet()
+        val oldRows = existingTracks.filter { it.uri in affectedUris }
+        val changedAlbumKeys = expandedTracks.map { it.track.albumKey }.toSet() +
+            oldRows.map { it.albumKey }.toSet()
+        val keptTracks = existingTracks.filter { it.uri !in affectedUris }
+        val existingAlbums = if (incremental) dao.allAlbums().associateBy { it.albumKey } else emptyMap()
 
         val albums = mutableListOf<AlbumEntity>()
-        for ((key, rows) in expandedTracks.groupBy { it.track.albumKey }) {
-            val first = rows.first()
+        val parsedByAlbum = expandedTracks.groupBy { it.track.albumKey }
+        val keptByAlbum = keptTracks.groupBy { it.albumKey }
+        for (key in parsedByAlbum.keys + keptByAlbum.keys) {
+            val parsedRows = parsedByAlbum[key].orEmpty()
+            val keptRows = keptByAlbum[key].orEmpty()
+            val previous = existingAlbums[key]
+            if (key !in changedAlbumKeys && previous != null) {
+                albums += previous
+                continue
+            }
+            if (parsedRows.isEmpty() && previous != null) {
+                // Nothing was re-read for this album - a track of it was deleted. Its covers are
+                // the ones it already had, re-resolved so a file that has since gone is dropped.
+                val folderCover = previous.folderCoverPath?.takeIf { File(it).isFile }
+                val embeddedPath = previous.embeddedCoverPath?.takeIf { File(it).isFile }
+                val userCover = coverStore.userCoverFor(key)
+                albums += previous.copy(
+                    trackCount = keptRows.size,
+                    embeddedCoverPath = embeddedPath,
+                    folderCoverPath = folderCover,
+                    coverRef = CoverResolver.resolve(userCover, embeddedPath, folderCover).reference,
+                )
+                continue
+            }
+            val first = parsedRows.first()
             val folderCover = resolveFolderCover(first.folderPath)
+            // Re-parsing one track of an album replaces the cover only when a picture was actually
+            // found; otherwise the album keeps the one the last scan stored.
             val embeddedPath = embeddedPaths[key]
-            // The file decides, not the covers row. The row records that the user picked a cover
-            // for this album; the file is what carries it, and its name comes from the album key,
-            // which changes when tags or the key rules do. Asking the row alone meant a key
-            // change silently dropped the cover from the album even though the image was still
-            // on disk - nine albums lost theirs that way when the format joined the key.
+                ?: previous?.embeddedCoverPath?.takeIf { File(it).isFile }
             val chosen = dao.coverForAlbum(key)?.userCoverPath
             val inherited = coverStore.hasOnlyFallbackCover(key)
             val onDisk = coverStore.userCoverFor(key)
             val userCover = onDisk ?: chosen?.takeIf { File(it).exists() }
-            // A cover found under an older key is copied to the name this key expects, and the
-            // row is written back, so the next scan finds it directly and the user's choice is
-            // not forgotten by the following key change.
             if (inherited) {
                 runCatching {
                     if (coverStore.adoptFallback(key)) {
@@ -226,42 +260,50 @@ class LibraryScanner(
                 coverRef = resolved,
                 embeddedCoverPath = embeddedPath,
                 folderCoverPath = folderCover,
-                trackCount = rows.size,
-                // Every track in a group shares a format, because the format is part of the
-                // key the group was formed by.
+                trackCount = parsedRows.size + keptRows.size,
                 format = AudioFormat.labelFor(first.track.mimeType),
             )
         }
-        val artists = tracks
-            .map { (it.albumArtist ?: it.artist ?: "Unknown artist") to it.albumKey }
-            .groupBy { it.first }
+        val artists = albums
+            .groupBy { it.albumArtist }
             .map { (name, rows) ->
                 ArtistEntity(
                     name = name,
                     sortKey = name.uppercase(),
-                    albumCount = rows.map { it.second }.distinct().size,
+                    albumCount = rows.size,
                 )
             }
 
-        // Which album art each artist shows is the user's choice, not scan output, and the
-        // clear below deletes the rows that hold it. Read it first, then write it back
-        // with the fresh rows, or every rescan would silently reset every artist.
         val imageChoices = dao.artistImageChoices().associate { it.name to it.imageAlbumKey }
 
-        dao.clearAlbumsAndArtists()
-        albums.forEach { dao.upsertAlbum(it) }
-        artists.forEach { artist ->
-            dao.upsertArtist(artist.copy(imageAlbumKey = imageChoices[artist.name]))
-        }
+        // One transaction for the whole result: 1,352 row writes used to be 1,352 commits.
+        dao.applyLibrary(
+            deleteAllSources = !incremental,
+            urisToDelete = if (incremental) affectedUris.toList() else emptyList(),
+            tracks = expandedTracks.map { it.track },
+            albums = albums,
+            artists = artists.map { artist -> artist.copy(imageAlbumKey = imageChoices[artist.name]) },
+        )
+        val applyMs = android.os.SystemClock.elapsedRealtime() - applyStartedAt
         _progress.value = ScanProgress("done", candidates.size, parsed, failed)
         val finishedAt = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i(
             "SertumScanTiming",
-            "fullScan=$fullScan candidates=${candidates.size} parsed=$parsed failed=$failed " +
-                "enumerateMs=${parseStartedAt - startedAt} parseMs=${finishedAt - parseStartedAt} " +
+            "mode=${if (incremental) "incremental" else "full"} fullScan=$fullScan " +
+                "candidates=${candidates.size} parsed=$parsed failed=$failed " +
+                "unchanged=${scanPlan?.unchangedCount ?: 0} removed=${removedUris.size} " +
+                "enumerateMs=$enumerateMs parseMs=$parseMs applyMs=$applyMs " +
                 "totalMs=${finishedAt - startedAt}",
         )
-        return ScanStats(candidates.size, parsed, failed, albums.size, artists.size)
+        return ScanStats(
+            candidates = candidates.size,
+            parsed = parsed,
+            failed = failed,
+            albums = albums.size,
+            artists = artists.size,
+            unchanged = scanPlan?.unchangedCount ?: 0,
+            incremental = incremental,
+        )
     }
 
     private fun resolveFolderCover(folderPath: String): String? {
@@ -342,6 +384,10 @@ class LibraryScanner(
                 source = SourceType.MEDIA_STORE,
                 coverRef = null,
                 isPlayable = true,
+                // Recorded so the next incremental scan can tell whether this file still needs
+                // reading, without opening it to find out.
+                sizeBytes = candidate.sizeBytes,
+                modifiedAtEpochMs = candidate.modifiedAtEpochMs,
             )
             ParseResult(
                 parsed = ParsedTrack(track, candidate.path.substringBeforeLast('/', ""), candidate.path),

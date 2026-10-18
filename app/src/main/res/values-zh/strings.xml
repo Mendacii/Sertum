@@ -58,6 +58,7 @@
     <string name="settings_scan_on_startup_short">启动时扫描</string>
     <string name="settings_full_scan_short">全盘扫描</string>
     <string name="settings_add_folder_short">添加文件夹</string>
+    <string name="settings_incremental_scan_short">增量扫描</string>
     <string name="settings_rescan_short">重新扫描</string>
     <string name="settings_output_auto_short">自动/常规</string>
     <string name="settings_remove_folder">移除</string>

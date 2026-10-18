@@ -77,13 +77,31 @@ class SertumApplication : Application() {
 
     /** Bootstrap scan; safe to call repeatedly (full-rescan semantics). */
     fun requestLibraryScan(onDone: (Result<ScanStats>) -> Unit = {}) {
-        libraryScanner.scanNow { result ->
+        requestScan(incremental = false, onDone = onDone)
+    }
+
+    /**
+     * Reads only files that are new or have changed since the last scan, and drops the ones that
+     * have gone.
+     *
+     * The same list of files is enumerated either way - listing is what a scan has to do to know
+     * what exists - but a file whose size and modification time match the stored row is not opened
+     * again, which is where nearly all of a scan's time goes.
+     */
+    fun requestIncrementalScan(onDone: (Result<ScanStats>) -> Unit = {}) {
+        requestScan(incremental = true, onDone = onDone)
+    }
+
+    private fun requestScan(incremental: Boolean, onDone: (Result<ScanStats>) -> Unit) {
+        libraryScanner.scanNow(incremental) { result ->
             result.onSuccess {
                 diagnosticsStore.log(
                     DiagnosticLevel.INFO,
                     "scan",
-                    "mediaStore candidates=${it.candidates} parsed=${it.parsed} " +
-                        "failed=${it.failed} albums=${it.albums} artists=${it.artists}",
+                    (if (it.incremental) "incremental" else "full") +
+                        " candidates=${it.candidates} parsed=${it.parsed} " +
+                        "unchanged=${it.unchanged} failed=${it.failed} " +
+                        "albums=${it.albums} artists=${it.artists}",
                 )
             }.onFailure {
                 diagnosticsStore.log(DiagnosticLevel.ERROR, "scan", "failed: ${it.message}")
@@ -101,6 +119,7 @@ class SertumApplication : Application() {
                 SertumDatabase.MIGRATION_4_5,
                 SertumDatabase.MIGRATION_5_6,
                 SertumDatabase.MIGRATION_6_7,
+                SertumDatabase.MIGRATION_7_8,
             )
             .build()
     }

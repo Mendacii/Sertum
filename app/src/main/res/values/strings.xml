@@ -60,6 +60,7 @@
     <string name="settings_scan_on_startup_short">Scan at start</string>
     <string name="settings_full_scan_short">Full scan</string>
     <string name="settings_add_folder_short">Add folder</string>
+    <string name="settings_incremental_scan_short">Incremental scan</string>
     <string name="settings_rescan_short">Rescan</string>
     <string name="settings_output_auto_short">Standard</string>
     <string name="settings_remove_folder">Remove</string>
