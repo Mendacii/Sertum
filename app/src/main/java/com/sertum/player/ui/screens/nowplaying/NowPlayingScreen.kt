@@ -65,6 +65,9 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
     val state by PlaybackStateHolder.state.collectAsState()
     val settings by SettingsStateHolder.state.collectAsState()
     val controller = (LocalContext.current.applicationContext as SertumApplication).playbackController
+    // Captured during composition so the click lambda below can persist the choice; reading
+    // LocalContext inside the lambda would not be a composable context.
+    val app = LocalContext.current.applicationContext as SertumApplication
 
     // The cover rotates only while audio is playing, and holds its angle when paused rather
     // than resetting, so resuming looks like the record picking up where it left off.
@@ -158,7 +161,11 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             IconButton(
-                onClick = { SettingsStateHolder.update { it.copy(roundCover = !it.roundCover) } },
+                onClick = {
+                    val round = !SettingsStateHolder.state.value.roundCover
+                    SettingsStateHolder.update { it.copy(roundCover = round) }
+                    // Durable, or the chosen cover shape reverts on the next cold start.
+                    app.preferences.setRoundCover(round)                },
             ) {
                 Icon(
                     Icons.Filled.Album,

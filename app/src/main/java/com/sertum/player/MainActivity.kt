@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.sertum.player.ui.SertumApp
+import com.sertum.player.ui.settings.LanguageOption
 import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.ui.theme.SertumTheme
 
@@ -93,6 +94,24 @@ class MainActivity : ComponentActivity() {
         // Applies the state-level theme override before any UI is built, so the state and
         // the rendered theme agree instead of diverging.
         if (savedInstanceState == null) {
+            // Seed the in-memory settings projection from the durable values before any UI is built.
+            // Without this the holder always started at its defaults, so a chosen theme, cover shape
+            // or language was forgotten the moment the process died - the reader saw the light theme
+            // revert to dark on the next launch. Seeding here rather than in the composition keeps it
+            // to one frame: the first frame drawn is already the saved theme.
+            val preferences = app.preferences
+            SettingsStateHolder.update {
+                it.copy(
+                    darkTheme = preferences.darkTheme.value,
+                    roundCover = preferences.roundCover.value,
+                    language = runCatching {
+                        LanguageOption.valueOf(preferences.language.value)
+                    }.getOrDefault(LanguageOption.SYSTEM),
+                )
+            }
+            // Diagnostic overrides come after the seed so a device check can force a state without
+            // the saved value winning. They deliberately do not persist: they exist to test
+            // rendering, not to change the reader's choice.
             when (intent?.getStringExtra(EXTRA_STATE_THEME)) {
                 "light" -> SettingsStateHolder.update { it.copy(darkTheme = false) }
                 "dark" -> SettingsStateHolder.update { it.copy(darkTheme = true) }

@@ -34,6 +34,18 @@ class AppPreferences(context: Context) {
         prefs.getBoolean(KEY_FULL_SCAN_ENABLED, DEFAULT_FULL_SCAN_ENABLED),
     )
 
+    private val _darkTheme = MutableStateFlow(
+        prefs.getBoolean(KEY_DARK_THEME, DEFAULT_DARK_THEME),
+    )
+
+    private val _roundCover = MutableStateFlow(
+        prefs.getBoolean(KEY_ROUND_COVER, DEFAULT_ROUND_COVER),
+    )
+
+    private val _language = MutableStateFlow(
+        prefs.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE) ?: DEFAULT_LANGUAGE,
+    )
+
     /** Cold-start library rescan. Defaults to the historical always-scan behaviour. */
     val scanOnStartup: StateFlow<Boolean> = _scanOnStartup.asStateFlow()
 
@@ -63,14 +75,61 @@ class AppPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_FULL_SCAN_ENABLED, enabled).apply()
     }
 
+    /**
+     * Theme, cover shape and language.
+     *
+     * These lived only in [com.sertum.player.ui.settings.SettingsStateHolder] and reset to their
+     * defaults on every cold start - the theme was the visible symptom: switching to light, closing
+     * the app and reopening it came back dark, because the holder is a plain in-memory object and
+     * nothing wrote the choice anywhere durable. They are not read before the UI exists, unlike
+     * [scanOnStartup], so they are seeded into the holder from here in `MainActivity.onCreate`
+     * before the first composition, and written back whenever the reader changes them.
+     */
+    val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
+
+    fun setDarkTheme(dark: Boolean) {
+        if (_darkTheme.value == dark) return
+        _darkTheme.value = dark
+        prefs.edit().putBoolean(KEY_DARK_THEME, dark).apply()
+    }
+
+    val roundCover: StateFlow<Boolean> = _roundCover.asStateFlow()
+
+    fun setRoundCover(round: Boolean) {
+        if (_roundCover.value == round) return
+        _roundCover.value = round
+        prefs.edit().putBoolean(KEY_ROUND_COVER, round).apply()
+    }
+
+    /** Stored by enum name; an unrecognised value falls back to [DEFAULT_LANGUAGE]. */
+    val language: StateFlow<String> = _language.asStateFlow()
+
+    fun setLanguage(tag: String) {
+        if (_language.value == tag) return
+        _language.value = tag
+        prefs.edit().putString(KEY_LANGUAGE, tag).apply()
+    }
+
     companion object {
         const val DEFAULT_SCAN_ON_STARTUP = true
 
         /** Off unless asked for: nothing is scanned before the reader says so. */
         const val DEFAULT_FULL_SCAN_ENABLED = false
 
+        /** Dark is the designed default (PRD 7.10); light is the opt-in. */
+        const val DEFAULT_DARK_THEME = true
+
+        /** Square covers are the default; the round shape is a choice. */
+        const val DEFAULT_ROUND_COVER = false
+
+        /** Stored as the enum's name rather than an ordinal, so reordering cannot remap it. */
+        const val DEFAULT_LANGUAGE = "SYSTEM"
+
         internal const val KEY_SCAN_ON_STARTUP = "scan_on_startup"
         internal const val KEY_FULL_SCAN_ENABLED = "full_scan_enabled"
+        internal const val KEY_DARK_THEME = "dark_theme"
+        internal const val KEY_ROUND_COVER = "round_cover"
+        internal const val KEY_LANGUAGE = "language"
 
         /** Retired key, cleared on first access so it cannot linger on disk. */
         internal const val KEY_OUTPUT_MODE_RETIRED = "output_mode"

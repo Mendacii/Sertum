@@ -243,6 +243,8 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                     selected = state.language == option,
                     onClick = {
                         SettingsStateHolder.update { it.copy(language = option) }
+                        // Durable, or the language reverts on the next cold start.
+                        app.preferences.setLanguage(option.name)
                         applyLocale(context, option)
                     },
                 )
@@ -260,14 +262,20 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 icon = Icons.Filled.DarkMode,
                 emphasis = TileEmphasis.TOGGLE,
                 selected = state.darkTheme,
-                onClick = { SettingsStateHolder.update { it.copy(darkTheme = true) } },
+                onClick = {
+                        SettingsStateHolder.update { it.copy(darkTheme = true) }
+                        app.preferences.setDarkTheme(true)
+                    },
             )
             SettingsTile(
                 label = stringResource(R.string.settings_light_theme),
                 icon = Icons.Filled.LightMode,
                 emphasis = TileEmphasis.TOGGLE,
                 selected = !state.darkTheme,
-                onClick = { SettingsStateHolder.update { it.copy(darkTheme = false) } },
+                onClick = {
+                        SettingsStateHolder.update { it.copy(darkTheme = false) }
+                        app.preferences.setDarkTheme(false)
+                    },
             )
         }
 
