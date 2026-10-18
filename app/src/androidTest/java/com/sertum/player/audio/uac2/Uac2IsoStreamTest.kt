@@ -32,6 +32,17 @@ class Uac2IsoStreamTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
+    fun feedbackDecodesToPpm() {
+        // Ratio convention: 0x00010000 is exactly nominal, and one LSB is about 15 ppm.
+        assertThat(Uac2Transport.nativeFeedbackPpm(0x00010000, 96_000)).isEqualTo(0)
+        assertThat(Uac2Transport.nativeFeedbackPpm(0x0000FFFF, 96_000)).isEqualTo(-15)
+        // Absolute convention: this DAWN PRO2 reports 12.0 frames per microframe at 96 kHz.
+        assertThat(Uac2Transport.nativeFeedbackRate(0x000C0000, 96_000)).isEqualTo(96_000)
+        // 12.0027 frames per microframe is about +224 ppm off nominal.
+        assertThat(Uac2Transport.nativeFeedbackPpm(0x000C00B0, 96_000)).isWithin(2).of(224)
+    }
+
+    @Test
     fun streamsPcmToTheDac() {
         val usbManager = context.getSystemService(UsbManager::class.java)
         val device = usbManager.deviceList.values.firstOrNull { it.hasAudioStreaming() }
@@ -56,7 +67,10 @@ class Uac2IsoStreamTest {
         var handle = 0L
         try {
             val info = parseUac2Descriptors(connection!!.rawDescriptors ?: ByteArray(0))
-            report.appendLine("clock=${info.clockSourceId} streamingIface=${info.streamingInterfaceNumber}")
+            report.appendLine(
+                "clock=${info.clockSourceId} streamingIface=${info.streamingInterfaceNumber} " +
+                    "feedbackEp=${info.feedbackEndpoint?.let { "0x%02X".format(it) } ?: "none"}",
+            )
             info.formats.forEach { report.appendLine("  alt=${it.alternateSetting} ${it.bitDepth}bit subslot=${it.subslotBytes} ep=0x%02X max=%d".format(it.endpointAddress, it.maxPacketSize)) }
 
             val format = info.formatForBitDepth(SOURCE_BITS)
@@ -82,6 +96,7 @@ class Uac2IsoStreamTest {
                 sampleRate = SAMPLE_RATE,
                 channels = CHANNELS,
                 subslotBytes = target.subslotBytes,
+                feedbackEndpoint = info.feedbackEndpoint ?: 0,
             )
             report.appendLine("nativeOpen=$handle alt=${target.alternateSetting}")
             Assume.assumeTrue("transport refused to open", handle != 0L)
@@ -104,7 +119,8 @@ class Uac2IsoStreamTest {
             val stats = Uac2Transport.nativeStats(handle)
             report.appendLine(
                 "submitted=${stats[0]} completed=${stats[1]} failed=${stats[2]} " +
-                    "frames=${stats[3]} lastErrno=${stats[4]} underruns=${stats[5]}",
+                    "frames=${stats[3]} lastErrno=${stats[4]} underruns=${stats[5]} " +
+                    "feedbackSeen=${stats[6]} ratePpm=${stats[7]}",
             )
             write(report)
 
@@ -113,6 +129,12 @@ class Uac2IsoStreamTest {
             assertThat(stats[2]).isEqualTo(0)       // none failed
             assertThat(stats[4]).isEqualTo(0)       // no ioctl error
             assertThat(stats[3]).isGreaterThan(SAMPLE_RATE.toLong() / 2) // over half a second sent
+            if (info.feedbackEndpoint != null) {
+                // The device reports its clock on the feedback endpoint; over three seconds it
+                // must have answered at least once, and its ratio must be a real crystal's.
+                assertThat(stats[6]).isGreaterThan(0)
+                assertThat(Math.abs(stats[7])).isLessThan(5_000)
+            }
         } finally {
             if (handle != 0L) {
                 Uac2Transport.nativeStop(handle)

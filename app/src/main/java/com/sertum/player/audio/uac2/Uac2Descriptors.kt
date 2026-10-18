@@ -19,6 +19,11 @@ data class Uac2DescriptorInfo(
     val clockSourceId: Int?,
     val audioControlInterfaceNumber: Int?,
     val streamingInterfaceNumber: Int?,
+    /**
+     * The asynchronous feedback endpoint (isochronous IN), or null for a device that does not
+     * report its clock. When present it carries one 16.16 fixed-point rate per interval.
+     */
+    val feedbackEndpoint: Int?,
     val formats: List<Uac2Format>,
 ) {
     /** The deepest format that does not exceed [bitDepth], falling back to the shallowest one. */
@@ -44,6 +49,7 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
     var clockSourceId: Int? = null
     var audioControlInterface: Int? = null
     var streamingInterface: Int? = null
+    var feedbackEndpoint: Int? = null
     val formats = mutableListOf<Uac2Format>()
 
     var currentSubclass = -1
@@ -90,12 +96,16 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
                 }
             }
             DESCRIPTOR_ENDPOINT -> {
-                if (currentSubclass == SUBCLASS_AUDIOSTREAMING && length >= 7 && pendingSubslot > 0) {
+                if (currentSubclass == SUBCLASS_AUDIOSTREAMING && length >= 7) {
                     val address = raw[payload].toInt() and 0xFF
                     val attributes = raw[payload + 1].toInt() and 0xFF
-                    val isIsoOut = (attributes and ENDPOINT_TYPE_MASK) == ENDPOINT_TYPE_ISOCHRONOUS &&
-                        (address and 0x80) == 0
-                    if (isIsoOut) {
+                    val isIso = (attributes and ENDPOINT_TYPE_MASK) == ENDPOINT_TYPE_ISOCHRONOUS
+                    val isOut = (address and 0x80) == 0
+                    if (isIso && !isOut) {
+                        // The asynchronous feedback stream: the device telling us its real clock.
+                        feedbackEndpoint = address
+                    }
+                    if (isIso && isOut && pendingSubslot > 0) {
                         val maxPacket = (raw[payload + 2].toInt() and 0xFF) or
                             ((raw[payload + 3].toInt() and 0xFF) shl 8)
                         formats += Uac2Format(
@@ -113,5 +123,11 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
         }
         index += length
     }
-    return Uac2DescriptorInfo(clockSourceId, audioControlInterface, streamingInterface, formats)
+    return Uac2DescriptorInfo(
+        clockSourceId,
+        audioControlInterface,
+        streamingInterface,
+        feedbackEndpoint,
+        formats,
+    )
 }

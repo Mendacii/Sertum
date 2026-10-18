@@ -91,7 +91,21 @@ struct IsoStream {
     std::mutex ringMutex;
     std::vector<uint8_t> ring;
 
-    uint32_t phaseAccumulator = 0;
+    /**
+     * Fractional frames carried across microframes.
+     *
+     * Driven by [effectiveRate] rather than the nominal rate: once the device's feedback endpoint
+     * reports its actual clock, the packet sizes follow the crystal instead of our arithmetic.
+     */
+    double phaseFrames = 0.0;
+    double effectiveRate = 0.0;
+
+    /** The device's asynchronous feedback: ISO IN endpoint, one 4-byte 16.16 value per interval. */
+    int feedbackEndpoint = 0;
+    std::vector<UrbSlot> feedbackSlots;
+    std::atomic<long long> feedbackSeen{0};
+    std::atomic<int> feedbackPpm{0};
+
     uint32_t maxPacketBytes = 0;
 
     std::atomic<long long> submitted{0};
@@ -107,10 +121,41 @@ IsoStream *fromHandle(jlong handle) {
 }
 
 int nextMicroframeFrames(IsoStream *stream) {
-    stream->phaseAccumulator += static_cast<uint32_t>(stream->sampleRate);
-    const int frames = static_cast<int>(stream->phaseAccumulator / kMicroframesPerSecond);
-    stream->phaseAccumulator %= kMicroframesPerSecond;
+    // Frames accumulate in the double domain so a feedback-corrected rate can be fractional; the
+    // carry is carried over, which keeps the long-term average exact.
+    const double rate = stream->effectiveRate > 0.0
+        ? stream->effectiveRate
+        : static_cast<double>(stream->sampleRate);
+    stream->phaseFrames += rate / kMicroframesPerSecond;
+    const int frames = static_cast<int>(stream->phaseFrames);
+    if (frames < 0) return 0;
+    stream->phaseFrames -= frames;
     return frames;
+}
+
+/**
+ * Decodes a 16.16 feedback value into frames per microframe.
+ *
+ * Two conventions are in the field. Most devices report a ratio of the actual rate to the nominal
+ * one (~1.0000), which is what the class spec leads you to expect; this DAWN PRO2 reports the
+ * absolute count instead (12.0 at 96 kHz, since 96000 / 8000 = 12). The value itself says which:
+ * a ratio sits near 1, an absolute count sits near (sampleRate / 8000), and the two ranges do not
+ * overlap for any sane rate.
+ */
+double framesPerUframeFromRaw(uint32_t raw, int sampleRate) {
+    const double decoded = static_cast<double>(raw) / 65536.0;
+    const double nominal = static_cast<double>(sampleRate) / kMicroframesPerSecond;
+    if (decoded > 0.9 && decoded < 1.1) return nominal * decoded;
+    return decoded;
+}
+
+/** The device's rate in parts per million away from nominal, or 0 when it reads as one. */
+int feedbackPpmFromRaw(uint32_t raw, int sampleRate) {
+    const double nominal = static_cast<double>(sampleRate) / kMicroframesPerSecond;
+    if (nominal <= 0.0) return 0;
+    const double frames = framesPerUframeFromRaw(raw, sampleRate);
+    if (frames <= 0.0) return 0;
+    return static_cast<int>((frames / nominal - 1.0) * 1e6);
 }
 
 void fillPacket(IsoStream *stream, uint8_t *destination, size_t bytes) {
@@ -164,6 +209,54 @@ bool submitSlot(IsoStream *stream, UrbSlot &slot) {
     return true;
 }
 
+bool submitFeedbackSlot(IsoStream *stream, UrbSlot &slot) {
+    slot.urb->type = USBDEVFS_URB_TYPE_ISO;
+    slot.urb->endpoint = static_cast<unsigned char>(stream->feedbackEndpoint);
+    slot.urb->status = 0;
+    slot.urb->flags = USBDEVFS_URB_ISO_ASAP;
+    slot.urb->buffer = slot.pcm;
+    slot.urb->buffer_length = 4;
+    slot.urb->actual_length = 0;
+    slot.urb->start_frame = 0;
+    slot.urb->number_of_packets = 1;
+    slot.urb->error_count = 0;
+    slot.urb->iso_frame_desc[0].length = 4;
+    slot.urb->iso_frame_desc[0].actual_length = 0;
+    slot.urb->iso_frame_desc[0].status = 0;
+    if (ioctl(stream->fd, USBDEVFS_SUBMITURB, slot.urb) < 0) {
+        stream->lastError.store(errno);
+        return false;
+    }
+    slot.inFlight.store(true);
+    return true;
+}
+
+/** Reads a completed feedback URB and re-arms it. */
+void consumeFeedback(IsoStream *stream, UrbSlot &slot) {
+    const int status = slot.urb->iso_frame_desc[0].status;
+    const unsigned int actual = slot.urb->iso_frame_desc[0].actual_length;
+    const long long seen = stream->feedbackSeen.load();
+    if (seen < 8) {
+        LOGI("feedback: status=%d actual=%u urbStatus=%d bytes=%02X %02X %02X %02X",
+             status, actual, slot.urb->status,
+             slot.pcm[0], slot.pcm[1], slot.pcm[2], slot.pcm[3]);
+    }
+    if (status == 0 && actual >= 4) {
+        uint32_t raw = 0;
+        std::memcpy(&raw, slot.pcm, sizeof(raw));
+        const double frames = framesPerUframeFromRaw(raw, stream->sampleRate);
+        const double nominal = static_cast<double>(stream->sampleRate) / kMicroframesPerSecond;
+        // Reject values that are not a clock at all (a stalled endpoint can return zeros).
+        if (nominal > 0.0 && frames > nominal * 0.9 && frames < nominal * 1.1) {
+            stream->effectiveRate = frames * kMicroframesPerSecond;
+            stream->feedbackPpm.store(feedbackPpmFromRaw(raw, stream->sampleRate));
+            stream->feedbackSeen.fetch_add(1);
+        }
+    }
+    slot.inFlight.store(false);
+    if (stream->running.load()) submitFeedbackSlot(stream, slot);
+}
+
 void pumpLoop(IsoStream *stream) {
     while (stream->running.load()) {
         usbdevfs_urb *done = nullptr;
@@ -173,16 +266,32 @@ void pumpLoop(IsoStream *stream) {
             for (int i = 0; i < done->number_of_packets; ++i) {
                 if (done->iso_frame_desc[i].status != 0) packetErrors++;
             }
-            if (done->status != 0 || packetErrors > 0) {
-                stream->failed.fetch_add(1);
-            } else {
-                stream->completed.fetch_add(1);
+            bool feedbackDone = false;
+            for (auto &slot : stream->feedbackSlots) {
+                if (slot.urb == done) feedbackDone = true;
             }
-            for (auto &slot : stream->slots) {
+            if (!feedbackDone) {
+                if (done->status != 0 || packetErrors > 0) {
+                    stream->failed.fetch_add(1);
+                } else {
+                    stream->completed.fetch_add(1);
+                }
+            }
+            bool handled = false;
+            for (auto &slot : stream->feedbackSlots) {
                 if (slot.urb == done) {
-                    slot.inFlight.store(false);
-                    if (stream->running.load()) submitSlot(stream, slot);
+                    consumeFeedback(stream, slot);
+                    handled = true;
                     break;
+                }
+            }
+            if (!handled) {
+                for (auto &slot : stream->slots) {
+                    if (slot.urb == done) {
+                        slot.inFlight.store(false);
+                        if (stream->running.load()) submitSlot(stream, slot);
+                        break;
+                    }
                 }
             }
             continue;
@@ -205,6 +314,11 @@ void teardown(IsoStream *stream) {
             ioctl(stream->fd, USBDEVFS_DISCARDURB, slot.urb);
         }
     }
+    for (auto &slot : stream->feedbackSlots) {
+        if (slot.inFlight.exchange(false)) {
+            ioctl(stream->fd, USBDEVFS_DISCARDURB, slot.urb);
+        }
+    }
     for (int i = 0; i < kUrbsInFlight * 4; ++i) {
         usbdevfs_urb *done = nullptr;
         if (ioctl(stream->fd, USBDEVFS_REAPURBNDELAY, &done) < 0) break;
@@ -215,7 +329,8 @@ void teardown(IsoStream *stream) {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
-    JNIEnv *, jobject, jint usbFd, jint endpoint, jint sampleRate, jint channels, jint subslotBytes) {
+    JNIEnv *, jobject, jint usbFd, jint endpoint, jint sampleRate, jint channels, jint subslotBytes,
+    jint feedbackEndpoint) {
     if (usbFd < 0 || endpoint <= 0 || sampleRate <= 0 || channels <= 0 || subslotBytes <= 0) {
         LOGE("nativeOpen: bad arguments fd=%d ep=%d rate=%d ch=%d subslot=%d",
              usbFd, endpoint, sampleRate, channels, subslotBytes);
@@ -233,6 +348,8 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
     stream->channels = channels;
     stream->subslotBytes = subslotBytes;
     stream->frameBytes = channels * subslotBytes;
+    stream->feedbackEndpoint = feedbackEndpoint;
+    stream->effectiveRate = static_cast<double>(sampleRate);
 
     const int maxFrames = (sampleRate + kMicroframesPerSecond - 1) / kMicroframesPerSecond;
     stream->maxPacketBytes = static_cast<uint32_t>(maxFrames * stream->frameBytes);
@@ -256,8 +373,28 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
             return 0;
         }
     }
-    LOGI("open fd=%d ep=0x%02X rate=%d ch=%d subslot=%d maxPacket=%u urb=%zuB depth=%d",
-         stream->fd, endpoint, sampleRate, channels, subslotBytes,
+    // Two feedback slots: the device reports every interval, and one in flight is too easy to miss.
+    if (feedbackEndpoint > 0) {
+        stream->feedbackSlots.resize(2);
+        for (auto &slot : stream->feedbackSlots) {
+            const size_t urbSize = sizeof(usbdevfs_urb) + sizeof(usbdevfs_iso_packet_desc);
+            slot.urb = static_cast<usbdevfs_urb *>(calloc(1, urbSize));
+            slot.pcm = static_cast<uint8_t *>(calloc(1, 4));
+            slot.capacity = 4;
+            if (slot.urb == nullptr || slot.pcm == nullptr) {
+                LOGE("feedback URB allocation failed");
+                for (auto &s : stream->feedbackSlots) {
+                    free(s.urb);
+                    free(s.pcm);
+                }
+                stream->feedbackSlots.clear();
+                stream->feedbackEndpoint = 0;
+                break;
+            }
+        }
+    }
+    LOGI("open fd=%d ep=0x%02X feedback=0x%02X rate=%d ch=%d subslot=%d maxPacket=%u urb=%zuB depth=%d",
+         stream->fd, endpoint, feedbackEndpoint, sampleRate, channels, subslotBytes,
          stream->maxPacketBytes, bytesPerUrb, kUrbsInFlight);
     return reinterpret_cast<jlong>(stream);
 }
@@ -268,6 +405,9 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, j
     if (stream == nullptr || stream->running.load()) return JNI_FALSE;
     for (auto &slot : stream->slots) {
         if (!submitSlot(stream, slot)) return JNI_FALSE;
+    }
+    for (auto &slot : stream->feedbackSlots) {
+        submitFeedbackSlot(stream, slot);
     }
     stream->running.store(true);
     stream->pump = std::thread(pumpLoop, stream);
@@ -280,9 +420,11 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStop(JNIEnv *, jobject, jl
     IsoStream *stream = fromHandle(handle);
     if (stream == nullptr) return;
     teardown(stream);
-    LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld underruns=%lld",
+    LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld underruns=%lld "
+         "feedback=%lld ratePpm=%d",
          stream->submitted.load(), stream->completed.load(), stream->failed.load(),
-         stream->framesSent.load(), stream->underruns.load());
+         stream->framesSent.load(), stream->underruns.load(),
+         stream->feedbackSeen.load(), stream->feedbackPpm.load());
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -291,6 +433,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeClose(JNIEnv *, jobject, j
     if (stream == nullptr) return;
     if (stream->running.load() || stream->pump.joinable()) teardown(stream);
     for (auto &slot : stream->slots) {
+        free(slot.urb);
+        free(slot.pcm);
+    }
+    for (auto &slot : stream->feedbackSlots) {
         free(slot.urb);
         free(slot.pcm);
     }
@@ -328,7 +474,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);
-    jlong values[6] = {0, 0, 0, 0, 0, 0};
+    jlong values[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     if (stream != nullptr) {
         values[0] = stream->submitted.load();
         values[1] = stream->completed.load();
@@ -336,8 +482,23 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject
         values[3] = stream->framesSent.load();
         values[4] = stream->lastError.load();
         values[5] = stream->underruns.load();
+        values[6] = stream->feedbackSeen.load();
+        values[7] = stream->feedbackPpm.load();
     }
-    jlongArray result = env->NewLongArray(6);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 6, values);
+    jlongArray result = env->NewLongArray(8);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 8, values);
     return result;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFeedbackPpm(
+    JNIEnv *, jobject, jint raw, jint sampleRate) {
+    return feedbackPpmFromRaw(static_cast<uint32_t>(raw), sampleRate);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFeedbackRate(
+    JNIEnv *, jobject, jint raw, jint sampleRate) {
+    return static_cast<jint>(framesPerUframeFromRaw(static_cast<uint32_t>(raw), sampleRate)
+                             * kMicroframesPerSecond);
 }

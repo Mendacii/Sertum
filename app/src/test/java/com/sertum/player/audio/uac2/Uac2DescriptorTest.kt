@@ -21,6 +21,8 @@ class Uac2DescriptorTest {
         assertThat(info.clockSourceId).isEqualTo(1)
         assertThat(info.audioControlInterfaceNumber).isEqualTo(1)
         assertThat(info.streamingInterfaceNumber).isEqualTo(2)
+        // The asynchronous feedback stream: without it the host cannot follow the DAC's crystal.
+        assertThat(info.feedbackEndpoint).isEqualTo(0x83)
     }
 
     @Test

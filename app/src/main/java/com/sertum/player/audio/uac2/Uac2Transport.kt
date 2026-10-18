@@ -19,6 +19,8 @@ object Uac2Transport {
         sampleRate: Int,
         channels: Int,
         subslotBytes: Int,
+        /** Isochronous IN endpoint carrying the device's 16.16 clock feedback; 0 when absent. */
+        feedbackEndpoint: Int,
     ): Long
 
     external fun nativeStart(handle: Long): Boolean
@@ -31,6 +33,12 @@ object Uac2Transport {
     /** Queues PCM; returns bytes accepted, 0 when the queue is full. */
     external fun nativeWrite(handle: Long, data: ByteArray, offset: Int, length: Int): Int
 
-    /** `[submitted, completed, failed, framesSent, lastErrno, underruns]`. */
+    /** `[submitted, completed, failed, framesSent, lastErrno, underruns, feedbackSeen, ratePpm]`. */
     external fun nativeStats(handle: Long): LongArray
+
+    /** Decodes a 16.16 feedback value to parts per million away from [sampleRate]. */
+    external fun nativeFeedbackPpm(raw: Int, sampleRate: Int): Int
+
+    /** Decodes the same value to the device's actual rate in Hz. */
+    external fun nativeFeedbackRate(raw: Int, sampleRate: Int): Int
 }

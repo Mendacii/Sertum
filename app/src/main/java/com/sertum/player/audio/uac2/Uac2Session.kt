@@ -51,6 +51,7 @@ class Uac2Session internal constructor(
             sampleRate = sampleRate,
             channels = channels,
             subslotBytes = format.subslotBytes,
+            feedbackEndpoint = descriptors.feedbackEndpoint ?: 0,
         )
         if (handle == 0L) {
             runCatching { setIdle() }
