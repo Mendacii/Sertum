@@ -45,7 +45,11 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
 
     private var deviceLostReported = false
 
+    /** Set by release(); an open() after this is a caller bug, not something to serve. */
+    private var released = false
+
     override fun open(spec: StreamSpec): Result<Unit> {
+        if (released) return Result.failure(IllegalStateException("UAC2 backend already released"))
         releaseStream()
         val opened = session.openStream(spec.sampleRate, spec.channelCount, spec.bitDepth)
             ?: return Result.failure(
@@ -111,6 +115,7 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
     }
 
     override fun release() {
+        released = true
         position.pause()
         releaseStream()
         capabilities = BackendCapabilities(supportsHardwareVolume = false, isExclusive = false)

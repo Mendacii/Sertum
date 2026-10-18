@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -60,6 +61,49 @@ constexpr int kMicroframesPerSecond = 8000;
 /** Nice value for the pump thread; -8 is aggressive without needing CAP_SYS_NICE. */
 constexpr int kPumpPriority = -8;
 
+/**
+ * Fixed-size byte queue.
+ *
+ * The previous version kept a std::vector and erased from its front on every fill, which memmoved
+ * the remaining audio - up to 38 KB, eight thousand times a second. That alone kept a core busy and
+ * was most of why the phone got warm while playing. A head/tail pair moves nothing.
+ */
+struct RingBuffer {
+    std::vector<uint8_t> data;
+    size_t head = 0;
+    size_t tail = 0;
+    size_t count = 0;
+    size_t capacity = 0;
+
+    void reset(size_t cap) {
+        data.assign(cap, 0);
+        capacity = cap;
+        head = tail = count = 0;
+    }
+
+    size_t space() const { return capacity - count; }
+
+    size_t push(const uint8_t *src, size_t n) {
+        const size_t take = std::min(n, space());
+        const size_t first = std::min(take, capacity - tail);
+        std::memcpy(data.data() + tail, src, first);
+        if (take > first) std::memcpy(data.data(), src + first, take - first);
+        tail = (tail + take) % capacity;
+        count += take;
+        return take;
+    }
+
+    size_t pop(uint8_t *dst, size_t n) {
+        const size_t take = std::min(n, count);
+        const size_t first = std::min(take, capacity - head);
+        std::memcpy(dst, data.data() + head, first);
+        if (take > first) std::memcpy(dst + first, data.data(), take - first);
+        head = (head + take) % capacity;
+        count -= take;
+        return take;
+    }
+};
+
 struct UrbSlot {
     usbdevfs_urb *urb = nullptr;
     uint8_t *pcm = nullptr;
@@ -101,7 +145,8 @@ struct IsoStream {
     std::thread pump;
 
     std::mutex ringMutex;
-    std::vector<uint8_t> ring;
+    std::condition_variable ringSpace;
+    RingBuffer ring;
 
     /**
      * Fractional frames carried across microframes.
@@ -208,7 +253,7 @@ void fillPacket(IsoStream *stream, uint8_t *destination, size_t bytes) {
     // Zero is digital silence for packed PCM; this is the fill whenever real audio is not there.
     std::memset(destination, 0, bytes);
     std::lock_guard<std::mutex> lock(stream->ringMutex);
-    if (stream->ring.empty()) {
+    if (stream->ring.count == 0) {
         if (stream->pcmSeen.load()) {
             stream->underruns.fetch_add(1);
         } else {
@@ -216,10 +261,9 @@ void fillPacket(IsoStream *stream, uint8_t *destination, size_t bytes) {
         }
         return;
     }
-    const size_t take = std::min(bytes, stream->ring.size());
-    std::memcpy(destination, stream->ring.data(), take);
-    stream->ring.erase(stream->ring.begin(), stream->ring.begin() + take);
+    stream->ring.pop(destination, bytes);
     stream->pcmSeen.store(true);
+    stream->ringSpace.notify_one();
 }
 
 bool submitSlot(IsoStream *stream, UrbSlot &slot) {
@@ -435,6 +479,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
     stream->channels = channels;
     stream->subslotBytes = subslotBytes;
     stream->frameBytes = channels * subslotBytes;
+    stream->ring.reset(static_cast<size_t>(stream->frameBytes) * static_cast<size_t>(sampleRate) / 5);
     stream->feedbackEndpoint = feedbackEndpoint;
     stream->effectiveRate = static_cast<double>(sampleRate);
 
@@ -556,13 +601,14 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
     if (stream->dead.load()) return -2;
     std::vector<uint8_t> chunk(static_cast<size_t>(length));
     env->GetByteArrayRegion(data, offset, length, reinterpret_cast<jbyte *>(chunk.data()));
-    const size_t budget =
-        static_cast<size_t>(stream->frameBytes) * static_cast<size_t>(stream->sampleRate) / 5;
-    std::lock_guard<std::mutex> lock(stream->ringMutex);
-    if (stream->ring.size() >= budget) return 0;
-    const size_t room = budget - stream->ring.size();
-    const size_t take = std::min(room, chunk.size());
-    stream->ring.insert(stream->ring.end(), chunk.begin(), chunk.begin() + take);
+    // Wait briefly for room instead of answering "zero frames" immediately: Media3 retries a zero
+    // return in a tight loop, and that spin was a large part of why playing in exclusive mode cost
+    // twice the CPU of the standard route.
+    std::unique_lock<std::mutex> lock(stream->ringMutex);
+    if (stream->ring.space() == 0 && !stream->dead.load()) {
+        stream->ringSpace.wait_for(lock, std::chrono::milliseconds(5));
+    }
+    const size_t take = stream->ring.push(chunk.data(), chunk.size());
     return static_cast<jint>(take);
 }
 
@@ -572,7 +618,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
     if (stream == nullptr) return;
     // Seeking: drop queued audio so the next microframe carries the new position, not the old one.
     std::lock_guard<std::mutex> lock(stream->ringMutex);
-    stream->ring.clear();
+    stream->ring.head = stream->ring.tail = stream->ring.count = 0;
     // A seek restarts the stream at a new position, so the silence that follows is priming again,
     // not a mid-stream dropout.
     stream->pcmSeen.store(false);

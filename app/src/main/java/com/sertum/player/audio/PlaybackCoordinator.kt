@@ -472,13 +472,31 @@ class PlaybackCoordinator(
                 return false
             }
         }
+        // Stop first, then swap the backend. Tearing the backend down while the player still had a
+        // sink on it let the sink reconfigure against a released backend: it reopened the UAC2
+        // stream, failed, released itself, and standard mode was left with no audio output at all.
+        val wasPlaying = player.isPlaying
+        val leavingExclusive = _outputMode.value == OutputMode.USB_EXCLUSIVE &&
+            mode != OutputMode.USB_EXCLUSIVE
+        player.stop()
         if (mode == OutputMode.USB_EXCLUSIVE) installUac2OrFallback() else teardownUac2()
         _outputMode.value = mode
-        val wasPlaying = player.isPlaying
-        player.stop()
         engine.router.exclusiveEnabled = mode == OutputMode.USB_EXCLUSIVE
         diagnostics.log(DiagnosticLevel.INFO, "output", "switched to $mode (cold restart)")
         if (playlist.isNotEmpty()) {
+            if (leavingExclusive) {
+                // Releasing the claim hands the DAC back to the kernel, and the audio HAL only
+                // rebuilds its output once it notices - preparing immediately opened a stream on a
+                // device the HAL did not have yet: the player reported playing while AudioFlinger
+                // stayed idle and nothing was heard.
+                scope.launch {
+                    kotlinx.coroutines.delay(CLAIM_RELEASE_SETTLE_MS)
+                    player.prepare()
+                    if (wasPlaying) player.play() else player.pause()
+                }
+                updateUiState()
+                return true
+            }
             player.prepare()
             if (wasPlaying) player.play() else player.pause()
         }
@@ -946,6 +964,9 @@ class PlaybackCoordinator(
         const val RECONNECT_TIMEOUT_MS = 2_500L
         const val RECONNECT_BACKOFF_MS = 300L
         private const val POSITION_POLL_MS = 500L
+
+        /** How long the audio HAL needs to rebuild its output after the DAC is released. */
+        private const val CLAIM_RELEASE_SETTLE_MS = 800L
 
         /** How long a DAC must stay absent before the detach is believed. */
         private const val DETACH_CONFIRM_MS = 1_200L
