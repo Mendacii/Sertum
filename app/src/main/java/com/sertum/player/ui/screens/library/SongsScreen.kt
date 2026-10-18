@@ -172,15 +172,22 @@ fun TrackRow(
     ) {
         if (showTrackNumber) {
             Box(
-                // Width only, deliberately. This was `size(44.dp)`, which is 121px and therefore
-                // taller than the 92px of text beside it - so it did not just reserve a column, it
-                // set a floor under the height of every row on the album page, holding each one
-                // open by 29px with the text centred in the gap. Measured before the change: 165px
-                // between track titles, against 136px on the songs tab where no such column
-                // exists. The number is centred by the row, so it does not need the height itself.
+                // A column just wide enough for two digits, with the number against its leading
+                // edge.
+                //
+                // It used to be `size(44.dp)` - 121px, taller than the 92px of text beside it, so it
+                // set a floor under every row on the album page and held each one open by 29px.
+                // Making it width-only fixed the height; the number was still centred inside those
+                // 121px, which put a single digit at x=98 while the row begins at x=44, and pushed
+                // every title out to x=165. Measured on device before this change: track "1" at
+                // x=98..111, "2" at x=96..114, titles all at x=165.
+                //
+                // 24dp is 66px: two digits (about 30px) plus a 13dp gap to the title, and a three
+                // digit number still fits. Left-aligned, so the number sits on the same edge as the
+                // row's own padding instead of floating in the middle of its column.
                 Modifier
-                    .width(44.dp),
-                contentAlignment = Alignment.Center,
+                    .width(24.dp),
+                contentAlignment = Alignment.CenterStart,
             ) {
                 Text(
                     text = track.trackNumber?.toString() ?: "•",
