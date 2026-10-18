@@ -116,11 +116,27 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 icon = Icons.Filled.FolderOpen,
                 emphasis = TileEmphasis.TOGGLE,
                 selected = fullScanEnabled,
-                // No system permission page any more. This switch no longer walks the file system,
-                // so it does not need MANAGE_EXTERNAL_STORAGE - it turns the system media index on
-                // or off for the scan. Asking for "all files access" and then never using it was
-                // the old behaviour, and it is what made the switch look like it did nothing.
-                onClick = { app.preferences.setFullScanEnabled(!fullScanEnabled) },
+                // Turning this on also sends the reader to the all-files access page, because that
+                // grant is what lets the scan see folder artwork: album covers stored as a
+                // `cover.jpg` beside the tracks are resolved with a directory listing and opened by
+                // path, neither of which works without it. The switch still does its own job - it
+                // gates the media index - but on its own it left every folder-covered album blank.
+                onClick = {
+                    val enabling = !fullScanEnabled
+                    val isManager = android.os.Build.VERSION.SDK_INT >= 30 &&
+                        android.os.Environment.isExternalStorageManager()
+                    if (enabling && !isManager) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:" + context.packageName),
+                                ),
+                            )
+                        }
+                    }
+                    app.preferences.setFullScanEnabled(enabling)
+                },
             )
             SettingsTile(
                 label = stringResource(R.string.settings_add_folder_short),

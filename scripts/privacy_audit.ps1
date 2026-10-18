@@ -29,11 +29,15 @@ $allowed = @(
     'android.permission.POST_NOTIFICATIONS'
     'android.permission.FOREGROUND_SERVICE'
     'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
-    # MANAGE_EXTERNAL_STORAGE used to be listed here, with the argument that declaring it is not
-    # the same as requesting it. That argument held while the optional full-disk scan existed.
-    # The scan no longer walks the file system - the switch now gates the system media index - so
-    # nothing reads files directly and the declaration was removed. It is a forbidden marker below
-    # now, so reintroducing it fails this gate instead of passing silently.
+    # Folder artwork. An album whose cover is a `cover.jpg` or `folder.jpg` beside its tracks is
+    # resolved during the scan with a directory listing and then opened by path when it is drawn;
+    # neither works without all-files access. It was removed for a day on 2026-10-18 on the argument
+    # that no code referenced it, which was true and wrong - the permission is not named anywhere,
+    # it is what makes those paths readable - and 87 albums lost their covers before it came back.
+    #
+    # It is not how the library is read: the media index is read with READ_MEDIA_AUDIO and the
+    # full-scan switch gates that, while this grant is only requested when that switch is turned on.
+    'android.permission.MANAGE_EXTERNAL_STORAGE'
 )
 
 # These two are merged in by AndroidX dependencies, not by our manifest:
@@ -53,7 +57,6 @@ $allowedApkOnly = @(
 # that reason - a marker that collides fails every allowed permission it appears in.
 $forbiddenMarkers = @(
     'INTERNET'
-    'MANAGE_EXTERNAL_STORAGE'
     'ACCESS_NETWORK'
     'CAMERA'
     'LOCATION'

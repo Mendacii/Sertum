@@ -15,10 +15,22 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- No MANAGE_EXTERNAL_STORAGE. It was declared for the opt-in full-disk scan, which walked
-         the file system recursively; that source was never wired up, and the full-scan switch now
-         gates the system media index instead (PRD 7.6, 2026-10-18). Nothing in the app reads
-         files directly, so the declaration would only be a permission the app never uses. -->
+    <!-- Needed for folder artwork, and only for that.
+         =
+         Removing this on 2026-10-18 broke every album whose cover is a `cover.jpg` or `folder.jpg`
+         sitting next to the audio: the scan resolves those with `File.listFiles` on the album's
+         directory, and the image pipeline then opens the resolved path. Without all-files access
+         the app cannot even list `/storage/emulated/0/Music`, so 87 albums fell back to the
+         placeholder and albums that still had a `/storage/...` path in the database showed nothing.
+         The removal was argued from "no code references it", which was true and beside the point:
+         the permission is what makes those file paths readable at all.
+         =
+         It is not a permission to read the library - the media index is read with READ_MEDIA_AUDIO,
+         and the full-scan switch gates that. It is requested only when the reader turns full scan
+         on, and the settings page explains what it is for. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-feature
