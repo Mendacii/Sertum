@@ -142,6 +142,7 @@ class MainActivity : ComponentActivity() {
                 it.copy(
                     darkTheme = preferences.darkTheme.value,
                     roundCover = preferences.roundCover.value,
+                autoExclusiveOnUsbAttach = preferences.autoExclusiveOnUsbAttach.value,
                     language = runCatching {
                         LanguageOption.valueOf(preferences.language.value)
                     }.getOrDefault(LanguageOption.SYSTEM),

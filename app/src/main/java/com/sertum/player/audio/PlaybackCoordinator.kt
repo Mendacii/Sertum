@@ -1,5 +1,6 @@
 package com.sertum.player.audio
 
+import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.audio.isUsbOutputDeviceId
 import com.sertum.player.audio.usbOutputDeviceId
 import com.sertum.player.audio.toOutputRef
@@ -376,7 +377,23 @@ class PlaybackCoordinator(
     }
 
     fun onUsbDeviceAttached() {
-        if (_outputMode.value != OutputMode.USB_EXCLUSIVE) return
+        // A DAC arriving is the moment the exclusive route becomes possible. With the preference on,
+        // plugging it in is enough - and because the hotplug controller reports the devices already
+        // present at startup, a launch with the DAC connected lands on the exclusive route too.
+        if (_outputMode.value != OutputMode.USB_EXCLUSIVE) {
+            if (
+                shouldAutoSwitchToExclusive(
+                    autoSwitchEnabled = SettingsStateHolder.state.value.autoExclusiveOnUsbAttach,
+                    alreadyExclusive = false,
+                    dacPresent = attachedUsbDeviceId() != null,
+                )
+            ) {
+                diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; selecting USB exclusive")
+                switchOutputMode(OutputMode.USB_EXCLUSIVE)
+            }
+            // The switch stopped and re-prepared on its own; there is no detach to recover from.
+            return
+        }
         if (playlist.isEmpty()) {
             _usbRecovery.value = UsbRecoveryState.NONE
             return

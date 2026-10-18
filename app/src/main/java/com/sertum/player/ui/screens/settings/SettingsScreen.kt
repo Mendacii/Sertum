@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
@@ -65,6 +66,9 @@ fun SettingsScreen(initialInfoSection: String? = null) {
 
     val context = LocalContext.current
     val app = context.applicationContext as SertumApplication
+    // The coordinator is the authority on the output route; the tile follows it so an automatic
+    // switch shows up here too.
+    val outputMode by app.playbackController.outputMode.collectAsState()
     val scanProgress by app.libraryScanner.progress.collectAsState()
     var safDirs by remember { mutableStateOf(app.safDirectoryStore.load()) }
     val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -218,25 +222,28 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 label = stringResource(R.string.settings_output_auto_short),
                 icon = Icons.Filled.Speaker,
                 emphasis = TileEmphasis.TOGGLE,
-                selected = state.outputMode == OutputMode.STANDARD,
-                onClick = {
-                    // Only record the choice once the route actually changed. The coordinator is
-                    // the authority on routing; a copy updated before the attempt is how the tile
-                    // ended up showing a mode the audio never entered.
-                    if (app.playbackController.switchOutputMode(OutputMode.STANDARD)) {
-                        SettingsStateHolder.update { it.copy(outputMode = OutputMode.STANDARD) }
-                    }
-                },
+                // Read from the coordinator, which is the authority on routing. A copy of the mode
+                // kept in settings state is how the tile once showed a route the audio never took,
+                // and how it missed the route the audio had taken automatically.
+                selected = outputMode == OutputMode.STANDARD,
+                onClick = { app.playbackController.switchOutputMode(OutputMode.STANDARD) },
             )
             SettingsTile(
                 label = stringResource(R.string.settings_output_usb_exclusive),
                 icon = Icons.Filled.Usb,
                 emphasis = TileEmphasis.TOGGLE,
-                selected = state.outputMode == OutputMode.USB_EXCLUSIVE,
+                selected = outputMode == OutputMode.USB_EXCLUSIVE,
+                onClick = { app.playbackController.switchOutputMode(OutputMode.USB_EXCLUSIVE) },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_auto_exclusive),
+                icon = Icons.Filled.Bolt,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = state.autoExclusiveOnUsbAttach,
                 onClick = {
-                    if (app.playbackController.switchOutputMode(OutputMode.USB_EXCLUSIVE)) {
-                        SettingsStateHolder.update { it.copy(outputMode = OutputMode.USB_EXCLUSIVE) }
-                    }
+                    val next = !state.autoExclusiveOnUsbAttach
+                    SettingsStateHolder.update { it.copy(autoExclusiveOnUsbAttach = next) }
+                    app.preferences.setAutoExclusiveOnUsbAttach(next)
                 },
             )
         }

@@ -38,6 +38,10 @@ class AppPreferences(context: Context) {
         prefs.getBoolean(KEY_DARK_THEME, DEFAULT_DARK_THEME),
     )
 
+    private val _autoExclusive = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_EXCLUSIVE, DEFAULT_AUTO_EXCLUSIVE),
+    )
+
     private val _roundCover = MutableStateFlow(
         prefs.getBoolean(KEY_ROUND_COVER, DEFAULT_ROUND_COVER),
     )
@@ -93,6 +97,21 @@ class AppPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_DARK_THEME, dark).apply()
     }
 
+    /**
+     * Whether plugging in a DAC selects the exclusive route.
+     *
+     * On by default: a player whose whole point is the exclusive path should not need a tap each
+     * time the DAC is connected. Switching still goes through the coordinator, so it is refused
+     * when nothing is attached rather than assumed.
+     */
+    val autoExclusiveOnUsbAttach: StateFlow<Boolean> = _autoExclusive.asStateFlow()
+
+    fun setAutoExclusiveOnUsbAttach(enabled: Boolean) {
+        if (_autoExclusive.value == enabled) return
+        _autoExclusive.value = enabled
+        prefs.edit().putBoolean(KEY_AUTO_EXCLUSIVE, enabled).apply()
+    }
+
     val roundCover: StateFlow<Boolean> = _roundCover.asStateFlow()
 
     fun setRoundCover(round: Boolean) {
@@ -119,6 +138,9 @@ class AppPreferences(context: Context) {
         /** Dark is the designed default (PRD 7.10); light is the opt-in. */
         const val DEFAULT_DARK_THEME = true
 
+        /** Plugging the DAC in selects the exclusive route unless the reader turns this off. */
+        const val DEFAULT_AUTO_EXCLUSIVE = true
+
         /** Square covers are the default; the round shape is a choice. */
         const val DEFAULT_ROUND_COVER = false
 
@@ -129,6 +151,7 @@ class AppPreferences(context: Context) {
         internal const val KEY_FULL_SCAN_ENABLED = "full_scan_enabled"
         internal const val KEY_DARK_THEME = "dark_theme"
         internal const val KEY_ROUND_COVER = "round_cover"
+        internal const val KEY_AUTO_EXCLUSIVE = "auto_exclusive_on_usb"
         internal const val KEY_LANGUAGE = "language"
 
         /** Retired key, cleared on first access so it cannot linger on disk. */

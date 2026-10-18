@@ -78,6 +78,7 @@
     <string name="artist_close">Close</string>
     <string name="settings_output_mode">Output mode</string>
     <string name="settings_output_usb_exclusive">USB exclusive</string>
+    <string name="settings_auto_exclusive">Auto exclusive</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_system">Follow system</string>
     <string name="settings_language_zh">中文</string>

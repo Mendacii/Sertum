@@ -29,3 +29,16 @@ internal fun isUsbOutputDeviceId(devices: List<OutputDeviceRef>, id: Int): Boole
     id > 0 && devices.any { it.id == id && it.isUsbAudio() }
 
 internal fun AudioDeviceInfo.toOutputRef(): OutputDeviceRef = OutputDeviceRef(id = id, type = type)
+
+/**
+ * Whether an arriving DAC should put the app on the exclusive route by itself.
+ *
+ * Deliberately narrow: only when the reader has left the preference on, only when the route is not
+ * already exclusive, and only with a DAC actually present. A refusal still comes from the
+ * coordinator, so this decides intent and never assumes the hardware agreed.
+ */
+internal fun shouldAutoSwitchToExclusive(
+    autoSwitchEnabled: Boolean,
+    alreadyExclusive: Boolean,
+    dacPresent: Boolean,
+): Boolean = autoSwitchEnabled && !alreadyExclusive && dacPresent

@@ -76,6 +76,7 @@
     <string name="artist_close">关闭</string>
     <string name="settings_output_mode">输出模式</string>
     <string name="settings_output_usb_exclusive">USB 独占</string>
+    <string name="settings_auto_exclusive">插上自动独占</string>
     <string name="settings_language">语言</string>
     <string name="settings_language_system">跟随系统</string>
     <string name="settings_language_zh">中文</string>
