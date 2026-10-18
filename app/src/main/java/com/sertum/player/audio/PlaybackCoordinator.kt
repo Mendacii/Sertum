@@ -523,7 +523,7 @@ class PlaybackCoordinator(
      * Polling is cheap, ends on its own, and depends on nothing but the state that matters.
      */
     private suspend fun pollForUsbPermission() {
-        repeat(120) {
+        repeat(240) {
             kotlinx.coroutines.delay(250)
             if (!awaitingUsbPermission) return
             val device = uac2Manager.findDevice() ?: return
