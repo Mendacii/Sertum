@@ -157,6 +157,18 @@ fun AlbumDetailScreen(albumKey: String, onBack: () -> Unit = {}) {
                             color = WarmGold,
                         )
                     }
+                    // How long the album runs. A line of its own, in the muted tone: it is a second
+                    // fact about the album rather than part of what the container is, and joining
+                    // it to the gold line made one long sentence out of two different things.
+                    // Free to compute - the track rows are already loaded to draw the list below.
+                    val runningTimeLabel = albumDurationLabel(tracks.sumOf { it.durationMs })
+                    if (runningTimeLabel != null) {
+                        Text(
+                            text = runningTimeLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             AlbumActionGrid(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -258,6 +270,29 @@ internal fun audioQualityLabel(format: String?, sampleRate: Int?, bitDepth: Int?
     }
     val detail = listOfNotNull(depth, rate).joinToString(" / ")
     return if (detail.isEmpty()) format else "$format · $detail"
+}
+
+/**
+ * How long an album runs, to the second, as `51:23` or `1:02:51`.
+ *
+ * The same shape the track rows use, one unit up: an album total needs the hours column that a
+ * track never reaches. Seconds rather than a rounded minute count because the total is read
+ * against those same track rows, and a total that disagreed with them would look like an error.
+ *
+ * A non-positive total means the tracks reported no duration; null lets the caller omit the line
+ * instead of printing "0:00".
+ */
+internal fun albumDurationLabel(totalMs: Long): String? {
+    if (totalMs <= 0L) return null
+    val totalSeconds = totalMs / 1000L
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(java.util.Locale.US, "%d:%02d", minutes, seconds)
+    }
 }
 
 /**
