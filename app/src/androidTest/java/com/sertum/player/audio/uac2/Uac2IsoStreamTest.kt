@@ -120,7 +120,7 @@ class Uac2IsoStreamTest {
             report.appendLine(
                 "submitted=${stats[0]} completed=${stats[1]} failed=${stats[2]} " +
                     "frames=${stats[3]} lastErrno=${stats[4]} underruns=${stats[5]} " +
-                    "feedbackSeen=${stats[6]} ratePpm=${stats[7]}",
+                    "feedbackSeen=${stats[6]} ratePpm=${stats[7]} primed=${stats[8]}",
             )
             write(report)
 
@@ -128,6 +128,8 @@ class Uac2IsoStreamTest {
             assertThat(stats[1]).isGreaterThan(0)   // URBs completed by the kernel
             assertThat(stats[2]).isEqualTo(0)       // none failed
             assertThat(stats[4]).isEqualTo(0)       // no ioctl error
+            // Silence while the pipeline primes is normal; a drop after real PCM flowed is not.
+            assertThat(stats[8]).isGreaterThan(0)
             assertThat(stats[3]).isGreaterThan(SAMPLE_RATE.toLong() / 2) // over half a second sent
             if (info.feedbackEndpoint != null) {
                 // The device reports its clock on the feedback endpoint; over three seconds it

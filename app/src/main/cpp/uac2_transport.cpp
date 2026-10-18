@@ -112,7 +112,16 @@ struct IsoStream {
     std::atomic<long long> completed{0};
     std::atomic<long long> failed{0};
     std::atomic<long long> framesSent{0};
+    /**
+     * Fills that used silence because the ring was empty.
+     *
+     * Split in two because they mean different things: priming happens once per stream start
+     * (before the decoder has produced anything) and is normal; an underrun happens after real PCM
+     * has flowed and is an audible gap. Counting them together made a healthy stream look broken.
+     */
+    std::atomic<long long> primed{0};
     std::atomic<long long> underruns{0};
+    std::atomic<bool> pcmSeen{false};
     std::atomic<int> lastError{0};
 };
 
@@ -159,15 +168,21 @@ int feedbackPpmFromRaw(uint32_t raw, int sampleRate) {
 }
 
 void fillPacket(IsoStream *stream, uint8_t *destination, size_t bytes) {
+    // Zero is digital silence for packed PCM; this is the fill whenever real audio is not there.
     std::memset(destination, 0, bytes);
     std::lock_guard<std::mutex> lock(stream->ringMutex);
     if (stream->ring.empty()) {
-        stream->underruns.fetch_add(1);
+        if (stream->pcmSeen.load()) {
+            stream->underruns.fetch_add(1);
+        } else {
+            stream->primed.fetch_add(1);
+        }
         return;
     }
     const size_t take = std::min(bytes, stream->ring.size());
     std::memcpy(destination, stream->ring.data(), take);
     stream->ring.erase(stream->ring.begin(), stream->ring.begin() + take);
+    stream->pcmSeen.store(true);
 }
 
 bool submitSlot(IsoStream *stream, UrbSlot &slot) {
@@ -420,10 +435,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStop(JNIEnv *, jobject, jl
     IsoStream *stream = fromHandle(handle);
     if (stream == nullptr) return;
     teardown(stream);
-    LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld underruns=%lld "
-         "feedback=%lld ratePpm=%d",
+    LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld primed=%lld "
+         "underruns=%lld feedback=%lld ratePpm=%d",
          stream->submitted.load(), stream->completed.load(), stream->failed.load(),
-         stream->framesSent.load(), stream->underruns.load(),
+         stream->framesSent.load(), stream->primed.load(), stream->underruns.load(),
          stream->feedbackSeen.load(), stream->feedbackPpm.load());
 }
 
@@ -469,12 +484,15 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
     // Seeking: drop queued audio so the next microframe carries the new position, not the old one.
     std::lock_guard<std::mutex> lock(stream->ringMutex);
     stream->ring.clear();
+    // A seek restarts the stream at a new position, so the silence that follows is priming again,
+    // not a mid-stream dropout.
+    stream->pcmSeen.store(false);
 }
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);
-    jlong values[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    jlong values[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     if (stream != nullptr) {
         values[0] = stream->submitted.load();
         values[1] = stream->completed.load();
@@ -484,9 +502,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject
         values[5] = stream->underruns.load();
         values[6] = stream->feedbackSeen.load();
         values[7] = stream->feedbackPpm.load();
+        values[8] = stream->primed.load();
     }
-    jlongArray result = env->NewLongArray(8);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 8, values);
+    jlongArray result = env->NewLongArray(9);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 9, values);
     return result;
 }
 
