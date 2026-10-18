@@ -151,6 +151,14 @@ val coreCoverageExcludes = listOf(
     "**/data/scan/FullScanSource*",
     "**/data/scan/LibraryScanner*",
     "**/data/covers/CoverStore*",
+    // The MediaStore shell left around CueSheetLoader once the decisions moved out of it: the
+    // loader is measured, and the query it feeds is the same kind of adapter as MediaStoreSource.
+    "**/data/scan/CueSource.class",
+    // Data carriers. The policy above says these do not belong in the denominator, and until now
+    // they were in it by accident: they are declared in LibraryScanner.kt, whose *class* pattern is
+    // excluded, and a pattern on the file name cannot catch classes declared beside it.
+    "**/data/scan/ScanStats.class",
+    "**/data/scan/ScanProgress.class",
 )
 
 fun coreCoverageClassDirs(): ConfigurableFileCollection {
