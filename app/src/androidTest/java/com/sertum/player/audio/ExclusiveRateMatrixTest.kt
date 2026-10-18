@@ -71,7 +71,7 @@ class ExclusiveRateMatrixTest {
         val deviceMatches: Boolean
             get() = requestedDeviceId <= 0 || deviceId == requestedDeviceId
         val depthMatches: Boolean get() = actualDepth == requestedDepth
-        val isExclusive: Boolean get() = sharingMode == 1
+        val isExclusive: Boolean get() = sharingMode == 0
         val bytesMatch: Boolean get() = submittedBytes == expectedBytes
     }
 

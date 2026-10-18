@@ -148,7 +148,7 @@ class ExclusivePathAuditTest {
 
         // Wire-level checks that do not depend on the device's mood.
         assertThat(tappedBytes).isEqualTo(submittedBytes)
-        assertThat(info.sharingMode).isEqualTo(1)
+        assertThat(info.sharingMode).isEqualTo(0) // 0 = AAUDIO_SHARING_MODE_EXCLUSIVE
         assertThat(info.actualRate).isEqualTo(sampleRate)
     }
 

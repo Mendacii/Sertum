@@ -45,11 +45,13 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
 
     private var deviceLostReported = false
 
-    /** Set by release(); an open() after this is a caller bug, not something to serve. */
-    private var released = false
+    // No permanent "released" flag here. The backend is shared by every AudioOutput the provider
+    // hands out, and Media3 releases an output when it reconfigures for a new format - so a flag
+    // set on that path would poison the backend for the rest of the session and the next open()
+    // after a sample-rate change would fail. The session itself is the real lifetime: once it is
+    // closed, openStream() returns null and open() fails on its own.
 
     override fun open(spec: StreamSpec): Result<Unit> {
-        if (released) return Result.failure(IllegalStateException("UAC2 backend already released"))
         releaseStream()
         val opened = session.openStream(spec.sampleRate, spec.channelCount, spec.bitDepth)
             ?: return Result.failure(
@@ -115,7 +117,6 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
     }
 
     override fun release() {
-        released = true
         position.pause()
         releaseStream()
         capabilities = BackendCapabilities(supportsHardwareVolume = false, isExclusive = false)

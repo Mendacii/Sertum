@@ -16,7 +16,11 @@ data class AaudioStreamInfo(
     /** Channels the stream actually opened with; the frame size depends on it. */
     val actualChannels: Int = 0,
 ) {
-    val isExclusive: Boolean get() = sharingMode == 1
+    // AAudioSharingMode: AAUDIO_SHARING_MODE_EXCLUSIVE = 0, AAUDIO_SHARING_MODE_SHARED = 1.
+    // This compared against 1, so a shared stream (the platform refused exclusive and fell
+    // back) was reported as exclusive - and the audit evidence recorded sharing=1 as proof of
+    // exclusivity when it meant the opposite.
+    val isExclusive: Boolean get() = sharingMode == 0
     val is24Bit: Boolean get() = actualFormat == 3
 }
 
