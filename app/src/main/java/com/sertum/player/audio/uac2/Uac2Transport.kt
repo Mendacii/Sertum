@@ -1,0 +1,33 @@
+package com.sertum.player.audio.uac2
+
+/**
+ * JNI bridge for the UAC2 isochronous transport (libsertumuac2).
+ *
+ * The transport owns raw usbdevfs URBs on the file descriptor UsbDeviceConnection already holds.
+ * The alt setting is deliberately not switched here: only the Java setInterface path allocates
+ * isochronous bandwidth in the xHCI scheduler, so the caller does that first.
+ */
+object Uac2Transport {
+    init {
+        System.loadLibrary("sertumuac2")
+    }
+
+    /** @return a handle, or 0 when the kernel refused the stream. */
+    external fun nativeOpen(
+        usbFd: Int,
+        endpoint: Int,
+        sampleRate: Int,
+        channels: Int,
+        subslotBytes: Int,
+    ): Long
+
+    external fun nativeStart(handle: Long): Boolean
+    external fun nativeStop(handle: Long)
+    external fun nativeClose(handle: Long)
+
+    /** Queues PCM; returns bytes accepted, 0 when the queue is full. */
+    external fun nativeWrite(handle: Long, data: ByteArray, offset: Int, length: Int): Int
+
+    /** `[submitted, completed, failed, framesSent, lastErrno, underruns]`. */
+    external fun nativeStats(handle: Long): LongArray
+}
