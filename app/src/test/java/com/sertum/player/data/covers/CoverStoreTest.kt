@@ -294,4 +294,43 @@ class CoverStoreTest {
         assertThat(store.mirrorFileFor("Death|Symbolic")).isNull()
         assertThat(store.restoreFromMirror("Death|Symbolic")).isFalse()
     }
+
+    @Test
+    fun `a cover chosen before the mirror existed is mirrored afterwards`() {
+        val (store, _) = mirroredStore()
+        // Saved when this store had no mirror directory: only the app's own copy exists.
+        val unmirrored = CoverStore(folder.newFolder("data-before-mirror"))
+        unmirrored.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+        val bytes = unmirrored.fileFor("Death|Symbolic").readBytes()
+        store.fileFor("Death|Symbolic").writeBytes(bytes)
+
+        assertThat(store.mirrorFileFor("Death|Symbolic")!!.exists()).isFalse()
+
+        assertThat(store.ensureMirrored("Death|Symbolic")).isTrue()
+
+        assertThat(store.mirrorFileFor("Death|Symbolic")!!.readBytes()).isEqualTo(byteArrayOf(7, 8, 9))
+    }
+
+    @Test
+    fun `mirroring again does nothing once the copy is there`() {
+        val (store, _) = mirroredStore()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+
+        assertThat(store.ensureMirrored("Death|Symbolic")).isFalse()
+    }
+
+    @Test
+    fun `there is nothing to mirror for an album with no cover`() {
+        val (store, _) = mirroredStore()
+        assertThat(store.ensureMirrored("Nobody|Nothing")).isFalse()
+        assertThat(store.ensureMirrored("Death|Symbolic")).isFalse()
+    }
+
+    @Test
+    fun `a store without a mirror has nothing to backfill`() {
+        val store = store()
+        store.save("Death|Symbolic", byteArrayOf(7, 8, 9))
+
+        assertThat(store.ensureMirrored("Death|Symbolic")).isFalse()
+    }
 }

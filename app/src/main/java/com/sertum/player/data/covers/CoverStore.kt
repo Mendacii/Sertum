@@ -78,6 +78,27 @@ class CoverStore(
         mirrorDir?.let { File(it, sha256(albumKey) + MIRROR_SUFFIX) }
 
     /**
+     * Mirrors a cover that only exists in the app's own store.
+     *
+     * Covers chosen before the mirror existed are in exactly that state, and nothing would ever
+     * copy them: [save] is the only writer, and it does not run again for a cover already saved.
+     * The scan calls this so the guarantee catches up with the covers that came first.
+     *
+     * Returns true when the file was written by this call.
+     */
+    fun ensureMirrored(albumKey: String): Boolean {
+        val mirror = mirrorDir ?: return false
+        val target = File(mirror, sha256(albumKey) + MIRROR_SUFFIX)
+        if (target.isFile && target.length() > 0) return false
+        val source = firstExisting(albumKey) ?: return false
+        return runCatching {
+            target.parentFile?.mkdirs()
+            target.writeBytes(source.readBytes())
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
      * Best effort on purpose: a device that will not let us write outside the app's data directory
      * must still be able to save a cover locally.
      */

@@ -219,6 +219,10 @@ class LibraryScanner(
                         CoverEntity(key, coverStore.fileFor(key).absolutePath, System.currentTimeMillis()),
                     )
                 }
+            } else {
+                // Covers chosen before the mirror existed have no copy outside the app yet; this
+                // is what catches them up, without the reader having to re-pick anything.
+                coverStore.ensureMirrored(key)
             }
         }
         for (key in parsedByAlbum.keys + keptByAlbum.keys) {
