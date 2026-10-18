@@ -81,6 +81,7 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
         val current = stream ?: return Result.failure(IllegalStateException("no UAC2 stream"))
         if (!transportRunning) {
             if (!Uac2Transport.nativeStart(current.handle)) {
+                android.util.Log.e("SertumUac2", "nativeStart failed handle=${current.handle}")
                 return Result.failure(IllegalStateException("UAC2 start failed"))
             }
             transportRunning = true

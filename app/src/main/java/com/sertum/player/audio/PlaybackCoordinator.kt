@@ -129,6 +129,9 @@ class PlaybackCoordinator(
     /** Set when the exclusive route is waiting on the USB permission dialog. */
     private var awaitingUsbPermission = false
 
+    /** A detach is only acted on once the device stays gone for [DETACH_CONFIRM_MS]. */
+    private var detachConfirmPending = false
+
     /** Set by MainActivity; requests POST_NOTIFICATIONS before the first playback. */
     @Volatile
     var notificationPermissionRequester: (() -> Unit)? = null
@@ -160,6 +163,8 @@ class PlaybackCoordinator(
         // A DAC unplugged mid-stream is a pause, not a failed track: Media3 would otherwise mark
         // the song unplayable and skip it.
         exclusiveBackend.onDeviceLost = { scope.launch { onUsbDeviceDetached() } }
+
+        watchForStalledPlayback()
 
         // MIUI's GreezeManager freezes a backgrounded process even while it holds a media foreground
         // service - measured at nine seconds, with the log line "reason: greeze". Nothing in the app
@@ -606,6 +611,52 @@ class PlaybackCoordinator(
         }
     }
 
+    /**
+     * Recovers a renderer that stopped making progress without an error.
+     *
+     * A run of app switches could leave Media3 in BUFFERING with data buffered, the sink paused and
+     * every command ignored - playWhenReady already true, so play() is a no-op. Stopping and
+     * re-preparing restarts the renderer from the current position, which is what a stuck player
+     * needs and what the user was doing by hand before.
+     */
+    private fun watchForStalledPlayback() {
+        scope.launch {
+            var lastPosition = -1L
+            var stalledSince = 0L
+            while (true) {
+                kotlinx.coroutines.delay(1_500)
+                val playing = player.playWhenReady && !player.isPlaying
+                if (!playing || _outputMode.value != OutputMode.USB_EXCLUSIVE) {
+                    stalledSince = 0L
+                    lastPosition = -1L
+                    continue
+                }
+                val position = player.currentPosition
+                if (position != lastPosition) {
+                    lastPosition = position
+                    stalledSince = 0L
+                    continue
+                }
+                if (stalledSince == 0L) {
+                    stalledSince = System.currentTimeMillis()
+                    continue
+                }
+                if (System.currentTimeMillis() - stalledSince < STALL_RECOVERY_MS) continue
+                diagnostics.log(
+                    DiagnosticLevel.WARNING,
+                    "playback",
+                    "stalled at ${position}ms (state=${player.playbackState}); re-preparing",
+                )
+                stalledSince = 0L
+                runCatching {
+                    player.stop()
+                    player.prepare()
+                    if (player.playWhenReady) player.play()
+                }
+            }
+        }
+    }
+
     private fun teardownUac2() {
         uac2Backend?.release()
         uac2Backend = null
@@ -624,6 +675,29 @@ class PlaybackCoordinator(
     // ---- USB hotplug (PRD 7.13) ----
 
     fun onUsbDeviceDetached() {
+        if (_outputMode.value != OutputMode.USB_EXCLUSIVE) return
+        // Debounce. The platform audio HAL drops the DAC from its device list for a moment while
+        // another app touches the audio stack, and acting on that flap tore the route down and
+        // rebuilt it, stopping the player each time - which is how a run of app switches ended with
+        // the sink stuck. A real unplug stays absent, so the confirmation below still fires.
+        if (detachConfirmPending) return
+        detachConfirmPending = true
+        scope.launch {
+            kotlinx.coroutines.delay(DETACH_CONFIRM_MS)
+            detachConfirmPending = false
+            if (attachedUsbDeviceId() != null) {
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "usb",
+                    "DAC presence flapped; ignoring the detach",
+                )
+                return@launch
+            }
+            performUsbDetach()
+        }
+    }
+
+    private fun performUsbDetach() {
         if (_outputMode.value != OutputMode.USB_EXCLUSIVE) return
         player.pause()
         // Release the sink that was opened on the device that just left. The queue and the position
@@ -872,5 +946,11 @@ class PlaybackCoordinator(
         const val RECONNECT_TIMEOUT_MS = 2_500L
         const val RECONNECT_BACKOFF_MS = 300L
         private const val POSITION_POLL_MS = 500L
+
+        /** How long a DAC must stay absent before the detach is believed. */
+        private const val DETACH_CONFIRM_MS = 1_200L
+
+        /** How long a renderer may report playing without moving before it is restarted. */
+        private const val STALL_RECOVERY_MS = 5_000L
     }
 }

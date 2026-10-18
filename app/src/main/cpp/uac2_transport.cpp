@@ -54,7 +54,7 @@ namespace {
  * kernel runs dry and the DAC gets silence for the remainder, which is the click heard when
  * switching away. Thirty-two milliseconds covers that stall with room to spare and costs 18 KB.
  */
-constexpr int kUrbsInFlight = 32;
+constexpr int kUrbsInFlight = 192;
 constexpr int kPacketsPerUrb = 8;
 constexpr int kMicroframesPerSecond = 8000;
 /** Nice value for the pump thread; -8 is aggressive without needing CAP_SYS_NICE. */
@@ -139,7 +139,7 @@ struct IsoStream {
      * The device went away underneath the transport.
      *
      * usbfs reports it as an ioctl failure, and the pump thread stopped - but `nativeWrite` would
-     * have kept accepting bytes into a ring nothing drains, so the backend reported successful
+     * have kept accepting bytes into a ring  drains, so the backend reported successful
      * writes and the player kept counting. Writes now fail fast once this is set.
      */
     std::atomic<bool> dead{false};
@@ -147,7 +147,7 @@ struct IsoStream {
     /**
      * Longest gap between two completed URBs, in microseconds.
      *
-     * A process-wide stall does not show up in `underruns`: nothing fills a packet, the kernel just
+     * A process-wide stall does not show up in `underruns`:  fills a packet, the kernel just
      * runs out of queued URBs and the device gets silence. Eight milliseconds of pipeline is easily
      * consumed by a background transition, so this number is what says whether the buffer is deep
      * enough for the stalls this device actually has.
@@ -312,9 +312,8 @@ void consumeFeedback(IsoStream *stream, UrbSlot &slot) {
 }
 
 void pumpLoop(IsoStream *stream) {
-    // Best effort: the audio priority keeps this thread ahead of ordinary work, which is what the
-    // 11.6 ms background stall was made of. A refusal here is not fatal - the deeper pipeline in
-    // kUrbsInFlight is what actually makes the stream hold.
+    // Best effort: the audio priority keeps this thread ahead of ordinary work. A refusal here is
+    // not fatal - the depth of kUrbsInFlight is what actually makes the stream hold.
     const int priority = setpriority(PRIO_PROCESS, 0, kPumpPriority);
     auto lastHeartbeat = std::chrono::steady_clock::now();
     LOGI("pump priority %d -> %d (errno=%d)", kPumpPriority, getpriority(PRIO_PROCESS, 0),
@@ -490,9 +489,21 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);
-    if (stream == nullptr || stream->running.load()) return JNI_FALSE;
+    if (stream == nullptr) return JNI_FALSE;
+    // Idempotent on purpose. Reporting failure for an already-running stream left the caller
+    // believing it had to retry, and every retry failed the same way - which is how the player ended
+    // up stuck buffering with the transport filling silence underneath it.
+    if (stream->running.load()) return JNI_TRUE;
+    if (stream->dead.load()) return JNI_FALSE;
     for (auto &slot : stream->slots) {
-        if (!submitSlot(stream, slot)) return JNI_FALSE;
+        if (!submitSlot(stream, slot)) {
+            // Roll back what did go out, so a failed start leaves no half-queued stream behind.
+            for (auto &other : stream->slots) {
+                if (other.inFlight.exchange(false)) ioctl(stream->fd, USBDEVFS_DISCARDURB, other.urb);
+            }
+            LOGE("start failed: errno=%d", errno);
+            return JNI_FALSE;
+        }
     }
     for (auto &slot : stream->feedbackSlots) {
         submitFeedbackSlot(stream, slot);
