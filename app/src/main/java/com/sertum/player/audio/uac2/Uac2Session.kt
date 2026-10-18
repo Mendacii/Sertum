@@ -18,6 +18,9 @@ class Uac2Session internal constructor(
 ) {
     val fileDescriptor: Int get() = connection.fileDescriptor
 
+    /** Where claim/alt/clock outcomes are reported, so a failed step is never silent. */
+    var onEvent: ((String) -> Unit)? = null
+
     data class OpenStream(val handle: Long, val format: Uac2Format, val sampleRate: Int)
 
     /**
@@ -33,8 +36,15 @@ class Uac2Session internal constructor(
         val target = interfaces.firstOrNull {
             it.alternateSetting == format.alternateSetting && it.interfaceSubclass == SUBCLASS_AUDIOSTREAMING
         } ?: return null
-        if (!connection.setInterface(target)) return null
-        setSampleRate(sampleRate)
+        if (!connection.setInterface(target)) {
+            onEvent?.invoke("setInterface(alt=${format.alternateSetting}) refused")
+            return null
+        }
+        val clockWritten = setSampleRate(sampleRate)
+        onEvent?.invoke(
+            "alt=${format.alternateSetting} ${format.bitDepth}bit subslot=${format.subslotBytes} " +
+                "rate=$sampleRate clockWritten=$clockWritten",
+        )
         val handle = Uac2Transport.nativeOpen(
             usbFd = connection.fileDescriptor,
             endpoint = format.endpointAddress,

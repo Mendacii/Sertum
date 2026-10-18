@@ -30,6 +30,9 @@ class Uac2DeviceManager(private val context: Context) {
     @Volatile
     private var session: Uac2Session? = null
 
+    /** Where claim outcomes are reported; set by whoever owns diagnostics. */
+    var onEvent: ((String) -> Unit)? = null
+
     val activeSession: Uac2Session? get() = session
 
     private val permissionReceiver = object : BroadcastReceiver() {
@@ -94,6 +97,9 @@ class Uac2DeviceManager(private val context: Context) {
         for (intf in interfaces) {
             if (connection.claimInterface(intf, true)) claimed++
         }
+        // force=true disconnects whatever kernel driver held the interface (snd-usb-audio), which
+        // is the step that takes the device away from the platform.
+        onEvent?.invoke("claimed $claimed/${interfaces.size} interfaces (force=true)")
         if (claimed == 0) {
             runCatching { connection.close() }
             return Result.failure(IllegalStateException("no interface could be claimed"))
@@ -104,6 +110,7 @@ class Uac2DeviceManager(private val context: Context) {
             return Result.failure(IllegalStateException("descriptors expose no streaming format"))
         }
         val opened = Uac2Session(device, connection, info, interfaces)
+        opened.onEvent = { onEvent?.invoke(it) }
         session = opened
         _permissionGranted.value = true
         return Result.success(opened)

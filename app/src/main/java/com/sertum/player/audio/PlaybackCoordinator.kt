@@ -111,7 +111,9 @@ class PlaybackCoordinator(
      * The UAC2 path: claims the DAC and writes isochronous URBs, bypassing AudioFlinger entirely.
      * Falls back to [exclusiveBackend] when the device, the permission or the descriptors say no.
      */
-    private val uac2Manager = Uac2DeviceManager(appContext)
+    private val uac2Manager = Uac2DeviceManager(appContext).apply {
+        onEvent = { message -> diagnostics.log(DiagnosticLevel.INFO, "uac2", message) }
+    }
     private var uac2Backend: Uac2Backend? = null
     private var exclusiveUsesUac2 = false
 
