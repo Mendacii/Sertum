@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Sertum" parent="android:Theme.Material.NoActionBar">
+        <!-- The window background is replaced in MainActivity with the app's own theme colour, so
+             this value only covers the instant before the activity runs. It stays the dark default
+             because that is what the app starts in. -->
         <item name="android:windowBackground">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
+        <!-- Transparent because the app draws under both bars. A colour here is painted by the
+             system on top of that content, and after a language change recreated the activity it
+             was what put a black strip above the light theme. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

@@ -1,5 +1,8 @@
 package com.sertum.player.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -32,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -40,11 +44,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -58,8 +65,8 @@ import com.sertum.player.ui.navigation.SertumDestinations
 import com.sertum.player.ui.screens.library.AlbumDetailScreen
 import com.sertum.player.ui.screens.library.ArtistDetailScreen
 import com.sertum.player.ui.screens.nowplaying.MiniPlayer
-import com.sertum.player.ui.screens.nowplaying.PlayerSheet
 import com.sertum.player.ui.screens.nowplaying.NowPlayingHost
+import com.sertum.player.ui.screens.nowplaying.PlayerSheet
 import com.sertum.player.ui.theme.SertumTheme
 
 private data class TopLevelDestination(
@@ -116,6 +123,31 @@ fun SertumApp(
     var showQueue by rememberSaveable { mutableStateOf(openQueue) }
     val settings by com.sertum.player.ui.settings.SettingsStateHolder.state.collectAsState()
     val context = LocalContext.current
+    // The bars are made transparent by MainActivity on every window it builds; what changes while
+    // this composition is alive is which way their icons have to point. Switching the theme does not
+    // recreate the activity, so nothing else would update them - and white icons on the light theme's
+    // paper background are simply invisible.
+    val view = LocalView.current
+    // The window background is what shows in the strip the composition does not reach (the status
+    // bar area after a recreation, for one). Set once at activity creation it would keep the theme
+    // the process started in, so switching themes has to update it as well.
+    val windowBackground = if (settings.darkTheme) {
+        com.sertum.player.ui.theme.PureBlack
+    } else {
+        com.sertum.player.ui.theme.PaperWhite
+    }
+    LaunchedEffect(windowBackground) {
+        context.findActivity()?.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(windowBackground.toArgb()),
+        )
+    }
+    SideEffect {
+        val activity = view.context.findActivity() ?: return@SideEffect
+        WindowCompat.getInsetsController(activity.window, view).apply {
+            isAppearanceLightStatusBars = !settings.darkTheme
+            isAppearanceLightNavigationBars = !settings.darkTheme
+        }
+    }
     val controller = (context.applicationContext as SertumApplication).playbackController
     val snackbarHostState = remember { SnackbarHostState() }
     val userMessage by controller.userMessage.collectAsState()
@@ -300,4 +332,11 @@ fun SertumApp(
             }
         }
     }
+}
+
+/** The Activity a view is attached to, through whatever context wrappers sit in between. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

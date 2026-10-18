@@ -5,8 +5,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.toArgb
 import com.sertum.player.ui.SertumApp
 import com.sertum.player.ui.screens.library.hasMediaPermission
 import com.sertum.player.ui.screens.library.mediaPermissionName
@@ -103,6 +106,21 @@ class MainActivity : ComponentActivity() {
             if (granted) (application as SertumApplication).requestLibraryScan()
         }
 
+    /**
+     * Transparent bars whose icons contrast with the app's own theme.
+     *
+     * The theme is an in-app setting, so `SystemBarStyle.auto` - which asks the system whether it
+     * is in dark mode - would be wrong whenever the two disagree.
+     */
+    private fun systemBarStyleFor(): SystemBarStyle {
+        val transparent = android.graphics.Color.TRANSPARENT
+        return if (SettingsStateHolder.state.value.darkTheme) {
+            SystemBarStyle.dark(transparent)
+        } else {
+            SystemBarStyle.light(transparent, transparent)
+        }
+    }
+
     private fun askForMediaAccessIfNeeded() {
         if (hasMediaPermission(this)) return
         mediaPermissionLauncher.launch(mediaPermissionName())
@@ -143,6 +161,36 @@ class MainActivity : ComponentActivity() {
             // reader is actually looking at.
             askForMediaAccessIfNeeded()
         }
+        // Also called after a recreation, which is the case that broke: a language change recreates
+        // this activity, and a recreated window does not inherit the platform's edge-to-edge, so the
+        // theme's legacy statusBarColor (#000000) showed through in the strip above a light page.
+        // Owning it here means every window the app builds is edge-to-edge; the legacy colours in
+        // the XML theme no longer decide anything.
+        enableEdgeToEdge(
+            statusBarStyle = systemBarStyleFor(),
+            navigationBarStyle = systemBarStyleFor(),
+        )
+        // Belt and braces: with edge-to-edge the system still paints a bar background when it thinks
+        // the window draws one, and this is what survived a recreation as a black strip. Transparent
+        // leaves nothing for it to paint.
+        @Suppress("DEPRECATION")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // The window background is what shows anywhere the composition does not reach. It is a
+        // fixed colour in the XML theme (#000000, the dark default), so a recreated window that
+        // lays its content out below the status bar showed a black strip above a light page -
+        // exactly what a language change did. Following the app's theme means whatever is exposed
+        // matches the page behind it, and a cold start flashes the right colour too.
+        window.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(
+                if (SettingsStateHolder.state.value.darkTheme) {
+                    com.sertum.player.ui.theme.PureBlack.toArgb()
+                } else {
+                    com.sertum.player.ui.theme.PaperWhite.toArgb()
+                },
+            ),
+        )
         app.playbackController.notificationPermissionRequester = {
             if (
                 Build.VERSION.SDK_INT >= 33 &&
