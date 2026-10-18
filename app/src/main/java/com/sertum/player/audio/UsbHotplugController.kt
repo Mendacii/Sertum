@@ -16,6 +16,11 @@ import androidx.core.content.ContextCompat
  * PRD 7.13: watches USB audio attach/detach (AudioManager device callback
  * plus UsbManager broadcasts as belt-and-braces) and Bluetooth output
  * presence. Coordinates the reaction; never shows system notifications here.
+ *
+ * Presence is derived from the *current device list* on every notification, never from the
+ * notification's own payload. The payloads describe a delta, and a delta that does not mention the
+ * USB device - which happens - left the previous flag standing, so the next attach looked like no
+ * change and was dropped. Re-reading the list cannot drift out of sync with the device.
  */
 class UsbHotplugController(
     context: Context,
@@ -32,19 +37,20 @@ class UsbHotplugController(
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-            update(addedDevices.toList(), present = true)
+            rescan()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-            update(removedDevices.toList(), present = false)
+            rescan()
         }
     }
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(receiverContext: Context?, intent: Intent?) {
             when (intent?.action) {
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> onAttached()
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> onDetached()
+                UsbManager.ACTION_USB_DEVICE_ATTACHED,
+                UsbManager.ACTION_USB_DEVICE_DETACHED,
+                -> rescan()
             }
         }
     }
@@ -56,52 +62,29 @@ class UsbHotplugController(
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
         ContextCompat.registerReceiver(appContext, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        scanInitialDevices()
+        rescan()
     }
 
-    private fun scanInitialDevices() {
-        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        update(devices.toList(), present = true)
-    }
-
-    private fun update(devices: List<AudioDeviceInfo>, present: Boolean) {
+    /**
+     * Re-derives USB and Bluetooth presence from the live output device list and reports only the
+     * transitions, so a notification that changes nothing stays silent.
+     */
+    private fun rescan() {
         if (closed) return
-        for (device in devices) {
-            when (device.type) {
-                AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> {
-                    if (present && !usbPresent) {
-                        usbPresent = true
-                        onUsbAttached()
-                    } else if (!present && usbPresent) {
-                        usbPresent = false
-                        onUsbDetached()
-                    }
-                }
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                -> {
-                    val newValue = present
-                    if (newValue != bluetoothPresent) {
-                        bluetoothPresent = newValue
-                        onBluetoothChanged(newValue)
-                    }
-                }
-            }
-        }
-    }
+        val devices = runCatching {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.toOutputRef() }
+        }.getOrNull() ?: return
 
-    private fun onAttached() {
-        if (!usbPresent) {
-            usbPresent = true
-            onUsbAttached()
+        val usbNow = usbOutputDeviceId(devices) != null
+        if (usbNow != usbPresent) {
+            usbPresent = usbNow
+            if (usbNow) onUsbAttached() else onUsbDetached()
         }
-    }
 
-    private fun onDetached() {
-        if (usbPresent) {
-            usbPresent = false
-            onUsbDetached()
+        val bluetoothNow = devices.any { it.isBluetoothAudio() }
+        if (bluetoothNow != bluetoothPresent) {
+            bluetoothPresent = bluetoothNow
+            onBluetoothChanged(bluetoothNow)
         }
     }
 

@@ -391,13 +391,20 @@ class PlaybackCoordinator(
                 diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; selecting USB exclusive")
                 switchOutputMode(OutputMode.USB_EXCLUSIVE)
             }
+            diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; route left as $(_outputMode.value)")
             // The switch stopped and re-prepared on its own; there is no detach to recover from.
             return
         }
         if (playlist.isEmpty()) {
+            diagnostics.log(DiagnosticLevel.INFO, "usb", "DAC attached; nothing queued to recover")
             _usbRecovery.value = UsbRecoveryState.NONE
             return
         }
+        diagnostics.log(
+            DiagnosticLevel.INFO,
+            "usb",
+            "DAC attached; recovering ${playlist.size} queued track(s), state=$_usbRecovery",
+        )
         if (_usbRecovery.value == UsbRecoveryState.RECOVERING) return
         scope.launch {
             var recovered = false

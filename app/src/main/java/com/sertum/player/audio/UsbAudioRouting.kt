@@ -14,6 +14,11 @@ internal data class OutputDeviceRef(val id: Int, val type: Int)
 internal fun OutputDeviceRef.isUsbAudio(): Boolean =
     type == AudioDeviceInfo.TYPE_USB_DEVICE || type == AudioDeviceInfo.TYPE_USB_HEADSET
 
+internal fun OutputDeviceRef.isBluetoothAudio(): Boolean =
+    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+        type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+        type == AudioDeviceInfo.TYPE_BLE_HEADSET
+
 /** The DAC's device id, or null when nothing USB is attached. */
 internal fun usbOutputDeviceId(devices: List<OutputDeviceRef>): Int? =
     devices.firstOrNull { it.isUsbAudio() }?.id
