@@ -122,4 +122,5 @@
     <string name="settings_info_background_summary">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_info_close">关闭</string>
     <string name="usb_permission_pending">许可 USB 访问后才会直接输出到 DAC，当前使用降级路径。</string>
+    <string name="background_freeze_hint">系统在后台冻结了播放器。请在省电策略中将本应用设为「无限制」。</string>
 </resources>

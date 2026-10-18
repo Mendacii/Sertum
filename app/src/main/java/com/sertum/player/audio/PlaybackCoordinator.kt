@@ -161,6 +161,30 @@ class PlaybackCoordinator(
         // the song unplayable and skip it.
         exclusiveBackend.onDeviceLost = { scope.launch { onUsbDeviceDetached() } }
 
+        // MIUI's GreezeManager freezes a backgrounded process even while it holds a media foreground
+        // service - measured at nine seconds, with the log line "reason: greeze". Nothing in the app
+        // can prevent that, but it can be noticed and explained instead of looking like a broken
+        // player: a gap this large means the whole process stopped running.
+        scope.launch {
+            var warned = false
+            while (true) {
+                kotlinx.coroutines.delay(3_000)
+                if (warned || !player.isPlaying || _outputMode.value != OutputMode.USB_EXCLUSIVE) continue
+                val gap = uac2Backend?.maxGapUs() ?: 0L
+                if (gap > 1_000_000L) {
+                    warned = true
+                    diagnostics.log(
+                        DiagnosticLevel.WARNING,
+                        "uac2",
+                        "process frozen while playing: maxGap=${gap}us",
+                    )
+                    _userMessage.value = appContext.getString(
+                        com.sertum.player.R.string.background_freeze_hint,
+                    )
+                }
+            }
+        }
+
         // Plugging a DAC in raises the permission dialog, and the attach handler has already tried
         // by then. Without this the fallback stick until the user toggles the mode by hand.
         scope.launch {
@@ -203,17 +227,37 @@ class PlaybackCoordinator(
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Silence while the UI says playing has two very different causes - a focus loss
+                // that paused the player, or a stream that stopped feeding - and only the log tells
+                // them apart after the fact.
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "playback",
+                    "isPlaying=$isPlaying playWhenReady=${player.playWhenReady} " +
+                        "state=${player.playbackState} mode=${_outputMode.value}",
+                )
                 updateUiState()
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "playback",
+                    "playWhenReady=$playWhenReady reason=$reason sup=${player.playbackSuppressionReason}",
+                )
                 engine.router.playWhenReady = playWhenReady
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "playback",
+                    "state=$playbackState isPlaying=${player.isPlaying}",
+                )
                 _playerState.value = playbackState
                 updateUiState()
             }
+
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId?.toLongOrNull()

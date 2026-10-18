@@ -318,7 +318,7 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 icon = Icons.Filled.BatterySaver,
                 emphasis = TileEmphasis.NAVIGABLE,
                 onClick = {
-                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    openBatteryProtection(context)
                 },
             )
             SettingsTile(
@@ -455,4 +455,38 @@ private fun SectionTitle(
             initiallyOpen = initiallyOpen,
         )
     }
+}
+
+
+/**
+ * Opens the screen where this app can be exempted from the platform's background policy.
+ *
+ * The generic battery-optimisation list is a poor destination on MIUI: the freeze that stops
+ * playback is its own "省电策略" setting, reachable per app, and the AOSP whitelist does not affect
+ * it (measured: whitelisting still froze the process for nine seconds).
+ */
+private fun openBatteryProtection(context: android.content.Context) {
+    val packageName = context.packageName
+    val label = runCatching {
+        context.packageManager.getApplicationLabel(context.applicationInfo).toString()
+    }.getOrDefault(packageName)
+    val miui = Intent().apply {
+        component = android.content.ComponentName(
+            "com.miui.powerkeeper",
+            "com.miui.powerkeeper.ui.HiddenAppsConfigActivity",
+        )
+        putExtra("package_name", packageName)
+        putExtra("package_label", label)
+    }
+    if (runCatching { context.startActivity(miui) }.isSuccess) return
+    val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = android.net.Uri.parse("package:" + packageName)
+    }
+    if (runCatching { context.startActivity(request) }.isSuccess) return
+    context.startActivity(
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            android.net.Uri.parse("package:" + packageName),
+        ),
+    )
 }

@@ -126,6 +126,15 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
      */
     override fun getBufferSizeInFrames(): Int = if (sampleRate > 0) sampleRate / 20 else 0
 
+    /**
+     * Longest gap between URBs on the current stream, in microseconds.
+     *
+     * A frozen process shows up here and nowhere else: the counts, the ring and the position all
+     * look healthy, because none of them ran.
+     */
+    fun maxGapUs(): Long =
+        stream?.let { Uac2Transport.nativeStats(it.handle).getOrNull(10) } ?: 0L
+
     private fun notifyDeviceLost() {
         if (deviceLostReported) return
         deviceLostReported = true

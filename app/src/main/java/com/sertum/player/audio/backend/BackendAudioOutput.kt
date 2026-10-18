@@ -27,6 +27,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  *    into zero-frame writes and a renderer timeout.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
+private const val TAG = "SertumAudio"
+
 class BackendAudioOutput(
     private val backend: AudioOutputBackend,
     private val outputConfig: androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig,
@@ -91,6 +93,8 @@ class BackendAudioOutput(
     }
 
     override fun play() {
+        android.util.Log.i(TAG, "sink.play")
+
         if (released) return
         // Never throw from AudioSink.play(): Media3 calls it outside a try, so a backend that cannot
         // start (the DAC left just as play was pressed) would kill the process. Leaving the stream
@@ -99,6 +103,8 @@ class BackendAudioOutput(
     }
 
     override fun pause() {
+        android.util.Log.i(TAG, "sink.pause")
+
         if (released) return
         // AudioSink.pause() may not throw: Media3 calls it while tearing renderers down and does not
         // catch WriteException there, so a backend that failed to drain (a DAC unplugged mid-stream,
@@ -198,7 +204,8 @@ class BackendAudioOutput(
             pending.copyInto(submitted)
             runCatching { tap(submitted) }
         }
-        val writtenFrames = backend.writePcm(pending, 0, pending.size).getOrElse {
+        val writtenFrames = backend.writePcm(pending, 0, pending.size).getOrElse { failure ->
+            android.util.Log.w(TAG, "write failed: ${'$'}{failure.message}")
             throw androidx.media3.exoplayer.audio.AudioOutput.WriteException(
                 PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
                 true,
@@ -216,6 +223,8 @@ class BackendAudioOutput(
     }
 
     override fun flush() {
+        android.util.Log.i(TAG, "sink.flush")
+
         if (released) return
         flushedFrames += pendingFrames
         pending = ByteArray(0)
@@ -226,6 +235,8 @@ class BackendAudioOutput(
     }
 
     override fun stop() {
+        android.util.Log.i(TAG, "sink.stop")
+
         if (released) return
         flushedFrames += pendingFrames
         pending = ByteArray(0)
@@ -237,6 +248,8 @@ class BackendAudioOutput(
     }
 
     override fun release() {
+        android.util.Log.i(TAG, "sink.release")
+
         if (released) return
         released = true
         startedOnce = false

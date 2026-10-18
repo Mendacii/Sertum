@@ -316,9 +316,24 @@ void pumpLoop(IsoStream *stream) {
     // 11.6 ms background stall was made of. A refusal here is not fatal - the deeper pipeline in
     // kUrbsInFlight is what actually makes the stream hold.
     const int priority = setpriority(PRIO_PROCESS, 0, kPumpPriority);
+    auto lastHeartbeat = std::chrono::steady_clock::now();
     LOGI("pump priority %d -> %d (errno=%d)", kPumpPriority, getpriority(PRIO_PROCESS, 0),
          priority == 0 ? 0 : errno);
     while (stream->running.load()) {
+        // Heartbeat: whether this thread is being scheduled at all is the difference between a
+        // stream that stalled and one that was frozen by the platform, and neither leaves a trace
+        // in the counters.
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - lastHeartbeat >= std::chrono::seconds(5)) {
+                lastHeartbeat = now;
+                LOGI("heartbeat submitted=%lld completed=%lld frames=%lld underruns=%lld "
+                     "dead=%d maxGap=%lld",
+                     stream->submitted.load(), stream->completed.load(),
+                     stream->framesSent.load(), stream->underruns.load(),
+                     stream->dead.load() ? 1 : 0, stream->maxGapUs.load());
+            }
+        }
         usbdevfs_urb *done = nullptr;
         const int rc = ioctl(stream->fd, USBDEVFS_REAPURBNDELAY, &done);
         if (rc == 0 && done != nullptr) {
