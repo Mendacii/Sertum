@@ -18,6 +18,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,9 +39,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
+import com.sertum.player.domain.playback.RepeatMode
 import com.sertum.player.ui.components.ThinChevronDown
 import com.sertum.player.ui.components.ThinChevronUp
 import com.sertum.player.ui.playback.PlaybackStateHolder
+import com.sertum.player.ui.theme.WarmGold
 import com.sertum.player.ui.theme.sertumUnselectedIcon
 import com.sertum.player.ui.theme.sertumUnselectedText
 
@@ -51,6 +56,10 @@ import com.sertum.player.ui.theme.sertumUnselectedText
 fun QueueScreen(onBack: (() -> Unit)? = null) {
     val state by PlaybackStateHolder.state.collectAsState()
     val controller = (LocalContext.current.applicationContext as SertumApplication).playbackController
+    // Mirrored from the player rather than owned here, so these two buttons can never disagree
+    // with what Media3 is actually doing.
+    val repeatMode by controller.repeatMode.collectAsState()
+    val shuffleEnabled by controller.shuffleEnabled.collectAsState()
     val listState = rememberLazyListState()
 
     Column(
@@ -80,6 +89,19 @@ fun QueueScreen(onBack: (() -> Unit)? = null) {
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
+            // Repeat and shuffle belong here because this is the only screen that shows the queue
+            // they act on. Both read the player's own state; gold means active, the same colour
+            // language the settings page uses.
+            RepeatButton(repeatMode = repeatMode, onClick = { controller.cycleRepeat() })
+            IconButton(onClick = { controller.toggleShuffle() }) {
+                Icon(
+                    imageVector = Icons.Filled.Shuffle,
+                    contentDescription = stringResource(
+                        if (shuffleEnabled) R.string.cd_shuffle_on else R.string.cd_shuffle_off,
+                    ),
+                    tint = if (shuffleEnabled) WarmGold else sertumUnselectedIcon,
+                )
+            }
             if (state.queue.isNotEmpty()) {
                 ClearQueueAction(onClick = { controller.clearQueue() })
             }
@@ -136,6 +158,28 @@ fun QueueScreen(onBack: (() -> Unit)? = null) {
                 }
             }
         }
+    }
+}
+
+/**
+ * One button for the three repeat states, because three buttons would be three controls for one
+ * choice. The icon changes with the state (repeat / repeat-one) and the description spells it out,
+ * so the state never depends on colour alone.
+ */
+@Composable
+private fun RepeatButton(repeatMode: RepeatMode, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(
+            imageVector = if (repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+            contentDescription = stringResource(
+                when (repeatMode) {
+                    RepeatMode.OFF -> R.string.cd_repeat_off
+                    RepeatMode.ALL -> R.string.cd_repeat_all
+                    RepeatMode.ONE -> R.string.cd_repeat_one
+                },
+            ),
+            tint = if (repeatMode == RepeatMode.OFF) sertumUnselectedIcon else WarmGold,
+        )
     }
 }
 

@@ -148,6 +148,29 @@ class PlaybackCoordinator(
     private val _outputMode = MutableStateFlow(OutputMode.STANDARD)
     val outputMode: StateFlow<OutputMode> = _outputMode.asStateFlow()
 
+    /**
+     * Repeat and shuffle, mirrored from the player rather than owned here.
+     *
+     * [setRepeat]/[setShuffle] write the player and these two, and the listener below copies back
+     * anything the player changes on its own (a media-session command, the notification). The queue
+     * screen renders from these flows, so what it shows is what the player is actually doing.
+     */
+    private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
+    val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
+
+    private val _shuffleEnabled = MutableStateFlow(false)
+    val shuffleEnabled: StateFlow<Boolean> = _shuffleEnabled.asStateFlow()
+
+    /**
+     * Whether the exclusive route really runs on UAC2.
+     *
+     * While [OutputMode.USB_EXCLUSIVE] is selected this can still be false: the DAC could not be
+     * opened directly and the AAudio fallback carries the audio. The output line labels that state
+     * as degraded instead of leaving the reader to find it in the diagnostics log.
+     */
+    private val _uac2RouteActive = MutableStateFlow(false)
+    val uac2RouteActive: StateFlow<Boolean> = _uac2RouteActive.asStateFlow()
+
     private val _bluetoothConnected = MutableStateFlow(false)
     val bluetoothConnected: StateFlow<Boolean> = _bluetoothConnected.asStateFlow()
 
@@ -263,6 +286,15 @@ class PlaybackCoordinator(
                 updateUiState()
             }
 
+            // Mirror, do not trust our own writes: a media-session command (or anything else
+            // holding the Player) can change these without going through setRepeat/setShuffle.
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                _repeatMode.value = repeatMode.toRepeatMode()
+            }
+
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                _shuffleEnabled.value = shuffleModeEnabled
+            }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId?.toLongOrNull()
@@ -385,14 +417,34 @@ class PlaybackCoordinator(
         updateUiState()
     }
 
+    /**
+     * Sets the repeat mode on the queue bookkeeping and on the player.
+     *
+     * The player is the authority - its listener copies the value back into [repeatMode] - but the
+     * flow is also written here so the button reflects the tap without waiting a frame.
+     */
     fun setRepeat(mode: RepeatMode) {
         queue.setRepeat(mode)
-        player.repeatMode = when (mode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-        }
+        player.repeatMode = mode.toPlayerRepeatMode()
+        _repeatMode.value = mode
     }
+
+    /** Off -> all -> one -> off: what the queue screen's single repeat button steps through. */
+    fun cycleRepeat() = setRepeat(nextRepeatMode(_repeatMode.value))
+
+    /**
+     * Turns Media3's shuffle on or off.
+     *
+     * Only the player is written. [QueueEngine] models shuffle as well, but its order is not the one
+     * Media3 follows and nothing on this path reads it; updating it too would create a second order
+     * that can disagree with the audio.
+     */
+    fun setShuffle(enabled: Boolean) {
+        player.shuffleModeEnabled = enabled
+        _shuffleEnabled.value = enabled
+    }
+
+    fun toggleShuffle() = setShuffle(!_shuffleEnabled.value)
 
     fun seekTo(positionMs: Long) {
         if (playlist.isNotEmpty()) player.seekTo(positionMs.coerceAtLeast(0L))
@@ -535,7 +587,7 @@ class PlaybackCoordinator(
             }
             uac2Backend = backend
             engine.router.exclusiveBackend = backend
-            exclusiveUsesUac2 = true
+            setExclusiveUsesUac2(true)
             diagnostics.log(
                 DiagnosticLevel.INFO,
                 "output",
@@ -544,7 +596,7 @@ class PlaybackCoordinator(
             )
         } else {
             engine.router.exclusiveBackend = exclusiveBackend
-            exclusiveUsesUac2 = false
+            setExclusiveUsesUac2(false)
             val failure = result.exceptionOrNull()
             diagnostics.log(
                 DiagnosticLevel.WARNING,
@@ -557,8 +609,26 @@ class PlaybackCoordinator(
                 _userMessage.value = appContext.getString(
                     com.sertum.player.R.string.usb_permission_pending,
                 )
+            } else {
+                // Any other reason - the DAC does not accept exclusive access, the usbfs claim was
+                // refused, the descriptors are unusable - used to be log-only, so the reader kept
+                // seeing "USB exclusive" while AAudio carried the audio. Say it out loud.
+                _userMessage.value = appContext.getString(
+                    com.sertum.player.R.string.usb_exclusive_degraded_message,
+                )
             }
         }
+    }
+
+    /**
+     * The only writer of [exclusiveUsesUac2].
+     *
+     * The badge and the player's output line read the same state, so the field and the published
+     * flow have to move together; two separate assignments is exactly how they drift apart.
+     */
+    private fun setExclusiveUsesUac2(active: Boolean) {
+        exclusiveUsesUac2 = active
+        _uac2RouteActive.value = active
     }
 
     /** Re-installs the exclusive backend and resumes where the user left off. */
@@ -679,7 +749,9 @@ class PlaybackCoordinator(
         uac2Backend?.release()
         uac2Backend = null
         uac2Manager.close()
-        exclusiveUsesUac2 = false
+        // Through the setter: a torn-down UAC2 route is by definition not the UAC2 route, and the
+        // output line must stop claiming it the moment the handle goes away.
+        setExclusiveUsesUac2(false)
         engine.router.exclusiveBackend = exclusiveBackend
     }
 
@@ -974,4 +1046,30 @@ class PlaybackCoordinator(
         /** How long a renderer may report playing without moving before it is restarted. */
         private const val STALL_RECOVERY_MS = 5_000L
     }
+}
+
+/**
+ * Off -> all -> one -> off, the order the queue screen's repeat button steps through.
+ *
+ * Top-level and internal rather than private, because the cycle is user-visible behaviour that can
+ * be checked without a Player - see RepeatModeCycleTest.
+ */
+internal fun nextRepeatMode(current: RepeatMode): RepeatMode = when (current) {
+    RepeatMode.OFF -> RepeatMode.ALL
+    RepeatMode.ALL -> RepeatMode.ONE
+    RepeatMode.ONE -> RepeatMode.OFF
+}
+
+/** The Media3 constant for a mode. Internal so the mapping can be asserted against the SDK. */
+internal fun RepeatMode.toPlayerRepeatMode(): Int = when (this) {
+    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+    RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+    RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+}
+
+/** The reverse mapping; an unknown constant reads as "no repeat" rather than as "repeat all". */
+internal fun Int.toRepeatMode(): RepeatMode = when (this) {
+    Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+    Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+    else -> RepeatMode.OFF
 }

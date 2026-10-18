@@ -53,6 +53,17 @@
     <string name="error_streak_message">连续多首播放失败，已自动跳过。详情见 设置 → 诊断。</string>
     <string name="usb_exclusive_requires_dac">请先连接 USB DAC，独占输出需要它。</string>
     <string name="usb_reconnect_failed_message">USB DAC 重连失败（3 次），请检查连接后手动重试。</string>
+    <!-- U2：UAC2 通路打不开、由 AAudio 兜底播放。输出行与这条提示是用户唯一能看到降级的
+         地方，所以必须直说，而不是只写在诊断日志里。 -->
+    <string name="output_usb_exclusive_degraded">USB 独占（降级）</string>
+    <string name="usb_exclusive_degraded_message">USB 独占不可用，已退回常规输出。详情见 设置 → 诊断。</string>
+    <!-- U3：队列页的循环与随机。每个值都是完整标签——唯一可见线索是图标，读屏必须能听到
+         当前状态，而不只是控件名。 -->
+    <string name="cd_repeat_off">循环：关闭</string>
+    <string name="cd_repeat_all">循环：全部</string>
+    <string name="cd_repeat_one">循环：单曲</string>
+    <string name="cd_shuffle_off">随机：关闭</string>
+    <string name="cd_shuffle_on">随机：开启</string>
 
     <!-- 设置 -->
     <string name="settings_scanning">扫描</string>

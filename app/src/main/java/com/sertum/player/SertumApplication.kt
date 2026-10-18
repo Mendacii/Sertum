@@ -3,6 +3,7 @@ package com.sertum.player
 import android.app.Application
 import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
@@ -22,7 +23,9 @@ import com.sertum.player.data.scan.LibraryScanner
 import com.sertum.player.data.scan.SafDirectoryStore
 import com.sertum.player.data.scan.ScanStats
 import com.sertum.player.ui.imaging.buildSertumImageLoader
+import com.sertum.player.ui.settings.LanguageOption
 import java.io.File
+import java.util.Locale
 
 class SertumApplication : Application() {
 
@@ -46,6 +49,38 @@ class SertumApplication : Application() {
         }
         ensureMediaController()
     }
+
+    /**
+     * Applies the stored language to this Application's own Resources.
+     *
+     * A snackbar, the media notification and anything else fetched through the application context
+     * do not use the activity's Resources, so a reader who picked English would still get Chinese
+     * messages without this. The activity itself gets the same choice from
+     * `MainActivity.attachBaseContext`, which runs before the activity's resources resolve.
+     *
+     * Called once from `MainActivity.onCreate` before the first composition. Not called from the
+     * composition, and not called on every locale change of its own: the caller recreates the
+     * activity, whose base context is configured again from the same stored value.
+     */
+    fun applySavedLocale() {
+        val option = runCatching { LanguageOption.valueOf(preferences.language.value) }
+            .getOrDefault(LanguageOption.SYSTEM)
+        // SYSTEM means "put the device's own language back", not "change nothing". These Resources
+        // may still carry a forced locale from an earlier call, so returning early here would leave
+        // the application context in the language the reader just switched away from.
+        val locale = forcedLocaleFor(option) ?: systemLocale()
+        val config = Configuration(resources.configuration)
+        config.setLocale(locale)
+        @Suppress("DEPRECATION")
+        resources.updateConfiguration(config, resources.displayMetrics)
+        // The same process default the settings option sets when it is tapped, so "what locale is
+        // this process in" does not depend on whether the reader ever opened that screen.
+        Locale.setDefault(locale)
+    }
+
+    /** The device's own language: the target to restore when the reader picks "follow system". */
+    private fun systemLocale(): Locale =
+        android.content.res.Resources.getSystem().configuration.locales.get(0) ?: Locale.getDefault()
 
     /**
      * Media3 only posts the media notification and promotes the service to
@@ -164,4 +199,17 @@ class SertumApplication : Application() {
             markTrackUnplayable = database.libraryDao()::markTrackUnplayable,
         )
     }
+}
+
+/**
+ * The locale the reader forced for the UI, or null for "follow the system".
+ *
+ * Single owner of that mapping: the activity's base context, this application's own Resources and
+ * the settings option all resolve it here, so the stored choice cannot mean different things in
+ * different places.
+ */
+internal fun forcedLocaleFor(option: LanguageOption): Locale? = when (option) {
+    LanguageOption.SYSTEM -> null
+    LanguageOption.ZH -> Locale.SIMPLIFIED_CHINESE
+    LanguageOption.EN -> Locale.ENGLISH
 }

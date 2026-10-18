@@ -2,7 +2,6 @@ package com.sertum.player.ui.screens.settings
 
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,6 +47,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.SERTUM_VERSION
+import com.sertum.player.forcedLocaleFor
 import com.sertum.player.sertumBuildFingerprint
 import com.sertum.player.ui.components.OptionInfo
 import com.sertum.player.ui.components.SectionHeader
@@ -379,16 +379,11 @@ fun SettingsScreen(initialInfoSection: String? = null) {
 }
 
 private fun applyLocale(context: Context, option: LanguageOption) {
-    val locale = when (option) {
-        LanguageOption.SYSTEM -> ResourcesCompatSystemLocale
-        LanguageOption.ZH -> Locale.SIMPLIFIED_CHINESE
-        LanguageOption.EN -> Locale.ENGLISH
-    }
-    Locale.setDefault(locale)
-    val config = Configuration(context.resources.configuration)
-    config.setLocale(locale)
-    @Suppress("DEPRECATION")
-    context.resources.updateConfiguration(config, context.resources.displayMetrics)
+    // Only the process default and the recreation happen here. Which Resources the window resolves
+    // strings from is decided once, in MainActivity.attachBaseContext, from the value just
+    // persisted - that is what makes the choice survive a rotation and a cold start. Updating this
+    // activity's resources as well is what made the choice look remembered but apply only once.
+    Locale.setDefault(forcedLocaleFor(option) ?: ResourcesCompatSystemLocale)
     (context as? android.app.Activity)?.recreate()
 }
 

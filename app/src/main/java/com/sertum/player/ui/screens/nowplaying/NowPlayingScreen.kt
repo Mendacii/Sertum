@@ -68,6 +68,9 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
     // Captured during composition so the click lambda below can persist the choice; reading
     // LocalContext inside the lambda would not be a composable context.
     val app = LocalContext.current.applicationContext as SertumApplication
+    // Whether the exclusive route is really UAC2. False means the AAudio fallback is carrying the
+    // audio while the mode still reads USB exclusive, so the output line has to say "degraded".
+    val uac2RouteActive by controller.uac2RouteActive.collectAsState()
 
     // The cover rotates only while audio is playing, and holds its angle when paused rather
     // than resetting, so resuming looks like the record picking up where it left off.
@@ -208,10 +211,16 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                     if (state.bitDepth > 0) append(" · ${state.bitDepth} bit")
                     append(" · ")
                     append(
-                        when (state.outputMode) {
-                            OutputMode.USB_EXCLUSIVE -> stringResource(R.string.output_usb_exclusive)
-                            OutputMode.BLUETOOTH -> stringResource(R.string.output_bluetooth)
-                            OutputMode.STANDARD -> stringResource(R.string.output_standard)
+                        when {
+                            // A selected exclusive route that is not UAC2 is the AAudio fallback:
+                            // label it degraded instead of claiming an output the audio is not on.
+                            state.outputMode == OutputMode.USB_EXCLUSIVE && !uac2RouteActive ->
+                                stringResource(R.string.output_usb_exclusive_degraded)
+                            state.outputMode == OutputMode.USB_EXCLUSIVE ->
+                                stringResource(R.string.output_usb_exclusive)
+                            state.outputMode == OutputMode.BLUETOOTH ->
+                                stringResource(R.string.output_bluetooth)
+                            else -> stringResource(R.string.output_standard)
                         },
                     )
                 },
@@ -254,17 +263,25 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                 )
             }
 
+            // No queue means no track to act on. The coordinator ignores every transport command
+            // while the playlist is empty, so an enabled button here was a control that did
+            // nothing and said nothing; disabled is the honest state.
+            val hasTrack = state.queue.isNotEmpty()
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { controller.skipToPrevious() }) {
+                IconButton(
+                    onClick = { controller.skipToPrevious() },
+                    enabled = hasTrack,
+                ) {
                     Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.cd_previous))
                 }
                 IconButton(
                     onClick = { controller.togglePlayPause() },
                     modifier = Modifier.size(72.dp),
+                    enabled = hasTrack,
                 ) {
                     Icon(
                         imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -272,7 +289,10 @@ fun NowPlayingScreen(onOpenQueue: () -> Unit) {
                         modifier = Modifier.size(48.dp),
                     )
                 }
-                IconButton(onClick = { controller.skipToNext() }) {
+                IconButton(
+                    onClick = { controller.skipToNext() },
+                    enabled = hasTrack,
+                ) {
                     Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.cd_next))
                 }
             }

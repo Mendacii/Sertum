@@ -54,6 +54,18 @@
     <string name="error_streak_message">Several tracks failed in a row and were skipped. See Settings → Diagnostics.</string>
     <string name="usb_exclusive_requires_dac">Connect a USB DAC first; exclusive output needs one.</string>
     <string name="usb_reconnect_failed_message">USB DAC reconnect failed after 3 attempts. Check the connection and try again.</string>
+    <!-- U2: the UAC2 route could not be opened and AAudio is carrying the audio. The output line
+         and this message are the only places the reader can learn that, so both have to say it
+         plainly instead of leaving it in the diagnostics log. -->
+    <string name="output_usb_exclusive_degraded">USB exclusive (degraded)</string>
+    <string name="usb_exclusive_degraded_message">USB exclusive is unavailable, so output fell back to the standard route. See Settings → Diagnostics.</string>
+    <!-- U3: repeat and shuffle on the queue screen. Each value is a complete label, because the
+         only visible cue is the icon: a screen reader has to hear the state, not just the control. -->
+    <string name="cd_repeat_off">Repeat: off</string>
+    <string name="cd_repeat_all">Repeat: all</string>
+    <string name="cd_repeat_one">Repeat: one</string>
+    <string name="cd_shuffle_off">Shuffle: off</string>
+    <string name="cd_shuffle_on">Shuffle: on</string>
 
     <!-- Settings -->
     <string name="settings_scanning">Scanning</string>

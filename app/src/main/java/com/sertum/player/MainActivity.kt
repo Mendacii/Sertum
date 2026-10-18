@@ -1,7 +1,9 @@
 package com.sertum.player
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.toArgb
+import com.sertum.player.data.prefs.AppPreferences
 import com.sertum.player.ui.SertumApp
 import com.sertum.player.ui.screens.library.hasMediaPermission
 import com.sertum.player.ui.screens.library.mediaPermissionName
@@ -126,9 +129,46 @@ class MainActivity : ComponentActivity() {
         mediaPermissionLauncher.launch(mediaPermissionName())
     }
 
+    /**
+     * Gives every window this activity builds the reader's chosen language.
+     *
+     * This is the one place that decides which Resources the UI resolves strings from, and it runs
+     * before anything resolves one - on the first creation, on a rotation and on the recreation a
+     * locale change performs. Applying the choice only when the option was tapped is what made it
+     * look forgotten after a restart: the activity was rebuilt with the system locale and nothing
+     * put the stored value back.
+     *
+     * "Follow system" returns the base context untouched, so the platform decides.
+     */
+    override fun attachBaseContext(newBase: Context) {
+        // Reading the preference here, rather than through the Application, is deliberate: this
+        // runs before the activity is attached, and the failure mode of a bad read must be "follow
+        // the system", not a crash on launch.
+        val stored = runCatching { AppPreferences(newBase).language.value }
+            .getOrDefault(AppPreferences.DEFAULT_LANGUAGE)
+        val option = runCatching { LanguageOption.valueOf(stored) }
+            .getOrDefault(LanguageOption.SYSTEM)
+        val locale = forcedLocaleFor(option)
+        if (locale == null) {
+            super.attachBaseContext(newBase)
+            return
+        }
+        val config = Configuration(newBase.resources.configuration)
+        config.setLocale(locale)
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as SertumApplication
+        // Every extra below exists so a device check can open a screen that injected input cannot
+        // reach. MainActivity is exported, so a shipped build must ignore them wholesale instead of
+        // letting any other app choose the tab, album, theme or language this one starts with.
+        // BuildConfig.DEBUG is a compile-time constant, so the release build keeps none of it.
+        val diagnosticIntent = intent.takeIf { BuildConfig.DEBUG }
+        // The activity is already localised by attachBaseContext; the application context is not,
+        // and the snackbars come from there.
+        app.applySavedLocale()
         // Applies the state-level theme override before any UI is built, so the state and
         // the rendered theme agree instead of diverging.
         if (savedInstanceState == null) {
@@ -151,11 +191,11 @@ class MainActivity : ComponentActivity() {
             // Diagnostic overrides come after the seed so a device check can force a state without
             // the saved value winning. They deliberately do not persist: they exist to test
             // rendering, not to change the reader's choice.
-            when (intent?.getStringExtra(EXTRA_STATE_THEME)) {
+            when (diagnosticIntent?.getStringExtra(EXTRA_STATE_THEME)) {
                 "light" -> SettingsStateHolder.update { it.copy(darkTheme = false) }
                 "dark" -> SettingsStateHolder.update { it.copy(darkTheme = true) }
             }
-            if (intent?.getStringExtra(EXTRA_ROUND_COVER) == "1") {
+            if (diagnosticIntent?.getStringExtra(EXTRA_ROUND_COVER) == "1") {
                 SettingsStateHolder.update { it.copy(roundCover = true) }
             }
             // After the seed and the diagnostic overrides, so the dialog belongs to the launch the
@@ -209,7 +249,7 @@ class MainActivity : ComponentActivity() {
         val requestedTab = if (savedInstanceState != null) {
             null
         } else {
-            when (intent?.getStringExtra(EXTRA_INITIAL_TAB)) {
+            when (diagnosticIntent?.getStringExtra(EXTRA_INITIAL_TAB)) {
                 "songs" -> 0
                 "albums" -> 1
                 "artists" -> 2
@@ -222,24 +262,24 @@ class MainActivity : ComponentActivity() {
                 SertumApp(
                     initialTab = requestedTab,
                     openPlayer = savedInstanceState == null &&
-                        intent?.getStringExtra(EXTRA_OPEN_PLAYER) == "1",
+                        diagnosticIntent?.getStringExtra(EXTRA_OPEN_PLAYER) == "1",
                     openQueue = savedInstanceState == null &&
-                        intent?.getStringExtra(EXTRA_OPEN_QUEUE) == "1",
+                        diagnosticIntent?.getStringExtra(EXTRA_OPEN_QUEUE) == "1",
                     initialAlbumKey = if (savedInstanceState != null) {
                         null
                     } else {
-                        intent?.getStringExtra(EXTRA_ALBUM)
+                        diagnosticIntent?.getStringExtra(EXTRA_ALBUM)
                     },
                     initialInfoSection = if (savedInstanceState != null) {
                         null
                     } else {
-                        intent?.getStringExtra(EXTRA_INFO_SECTION)
+                        diagnosticIntent?.getStringExtra(EXTRA_INFO_SECTION)
                     },
 
                     initialDarkTheme = if (savedInstanceState != null) {
                         null
                     } else {
-                        when (intent?.getStringExtra(EXTRA_THEME)) {
+                        when (diagnosticIntent?.getStringExtra(EXTRA_THEME)) {
                             "light" -> false
                             "dark" -> true
                             else -> null

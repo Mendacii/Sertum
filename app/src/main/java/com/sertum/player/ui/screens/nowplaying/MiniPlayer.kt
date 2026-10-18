@@ -50,7 +50,12 @@ fun MiniPlayer(onExpand: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { controller.togglePlayPause() }) {
+            // Same rule as the full player: with an empty playlist the coordinator ignores the
+            // press, so the button must not invite one. The row still opens the player.
+            IconButton(
+                onClick = { controller.togglePlayPause() },
+                enabled = state.queue.isNotEmpty(),
+            ) {
                 Icon(
                     imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = stringResource(if (state.isPlaying) R.string.cd_pause else R.string.cd_play),
