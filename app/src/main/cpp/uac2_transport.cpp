@@ -316,6 +316,15 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
     return static_cast<jint>(take);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, jlong handle) {
+    IsoStream *stream = fromHandle(handle);
+    if (stream == nullptr) return;
+    // Seeking: drop queued audio so the next microframe carries the new position, not the old one.
+    std::lock_guard<std::mutex> lock(stream->ringMutex);
+    stream->ring.clear();
+}
+
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);

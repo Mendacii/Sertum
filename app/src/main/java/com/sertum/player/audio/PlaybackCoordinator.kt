@@ -1,5 +1,7 @@
 package com.sertum.player.audio
 
+import com.sertum.player.audio.uac2.Uac2DeviceManager
+import com.sertum.player.audio.backend.Uac2Backend
 import com.sertum.player.ui.settings.SettingsStateHolder
 import com.sertum.player.audio.isUsbOutputDeviceId
 import com.sertum.player.audio.usbOutputDeviceId
@@ -104,6 +106,14 @@ class PlaybackCoordinator(
     private val queue = QueueEngine()
     private val errorPolicy = PlaybackErrorPolicy()
     private val exclusiveBackend = AaudioExclusiveBackend()
+
+    /**
+     * The UAC2 path: claims the DAC and writes isochronous URBs, bypassing AudioFlinger entirely.
+     * Falls back to [exclusiveBackend] when the device, the permission or the descriptors say no.
+     */
+    private val uac2Manager = Uac2DeviceManager(appContext)
+    private var uac2Backend: Uac2Backend? = null
+    private var exclusiveUsesUac2 = false
 
     /** Set by MainActivity; requests POST_NOTIFICATIONS before the first playback. */
     @Volatile
@@ -339,6 +349,7 @@ class PlaybackCoordinator(
             updateUiState()
             return false
         }
+        if (mode == OutputMode.USB_EXCLUSIVE) installUac2OrFallback() else teardownUac2()
         _outputMode.value = mode
         val wasPlaying = player.isPlaying
         player.stop()
@@ -359,6 +370,45 @@ class PlaybackCoordinator(
         )
     }.getOrNull()
 
+    /**
+     * Installs the UAC2 backend when the DAC allows it, otherwise leaves the AAudio one in place.
+     *
+     * Reported either way: a fallback that nobody records is the silent downgrade the PRD forbids.
+     */
+    private fun installUac2OrFallback() {
+        teardownUac2()
+        val result = uac2Manager.open()
+        val session = result.getOrNull()
+        if (session != null) {
+            val backend = Uac2Backend(session)
+            uac2Backend = backend
+            engine.router.exclusiveBackend = backend
+            exclusiveUsesUac2 = true
+            diagnostics.log(
+                DiagnosticLevel.INFO,
+                "output",
+                "UAC2 backend installed: clock=${session.descriptors.clockSourceId} " +
+                    "formats=${session.descriptors.formats.map { it.bitDepth }}",
+            )
+        } else {
+            engine.router.exclusiveBackend = exclusiveBackend
+            exclusiveUsesUac2 = false
+            diagnostics.log(
+                DiagnosticLevel.WARNING,
+                "output",
+                "UAC2 unavailable (${result.exceptionOrNull()?.message}); using AAudio exclusive",
+            )
+        }
+    }
+
+    private fun teardownUac2() {
+        uac2Backend?.release()
+        uac2Backend = null
+        uac2Manager.close()
+        exclusiveUsesUac2 = false
+        engine.router.exclusiveBackend = exclusiveBackend
+    }
+
     fun setBluetoothConnected(connected: Boolean) {
         if (_bluetoothConnected.value == connected) return
         _bluetoothConnected.value = connected
@@ -375,6 +425,8 @@ class PlaybackCoordinator(
         // survive; the next play opens a fresh output on whatever route is there by then. Preparing
         // here instead would race the audio system still tearing the old route down.
         player.stop()
+        // Release the claim and the connection with the device that just left.
+        teardownUac2()
         // Fall back rather than hold the mode: with the DAC gone, "USB exclusive" describes a device
         // that is not attached, and the badge would be a claim the audio path cannot back.
         _outputMode.value = OutputMode.STANDARD
@@ -495,17 +547,18 @@ class PlaybackCoordinator(
     }
 
     private fun bitPerfectState(): BitPerfectState = when (displayOutputMode()) {
-        OutputMode.USB_EXCLUSIVE ->
-            if (
-                exclusiveBackend.capabilities.isExclusive &&
-                streamIsOnUsbDevice() &&
-                engine.router.isSourceDepthPreserved() &&
-                systemMusicVolume01() >= 1f
-            ) {
-                BitPerfectState.INTACT
-            } else {
-                BitPerfectState.DEGRADED
-            }
+        OutputMode.USB_EXCLUSIVE -> {
+            val depthPreserved = engine.router.isSourceDepthPreserved()
+            // The UAC2 route has no mixer and no system volume in it, so only the depth can spoil it.
+            // The AAudio route still passes through both, hence the extra conditions.
+            val routeIntact = exclusiveUsesUac2 ||
+                (
+                    exclusiveBackend.capabilities.isExclusive &&
+                        streamIsOnUsbDevice() &&
+                        systemMusicVolume01() >= 1f
+                    )
+            if (depthPreserved && routeIntact) BitPerfectState.INTACT else BitPerfectState.DEGRADED
+        }
         else -> BitPerfectState.NOT_APPLICABLE
     }
 

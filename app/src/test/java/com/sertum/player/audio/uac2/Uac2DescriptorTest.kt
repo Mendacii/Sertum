@@ -19,6 +19,7 @@ class Uac2DescriptorTest {
     fun `finds the clock entity and the streaming interface`() {
         val info = parseUac2Descriptors(fixture())
         assertThat(info.clockSourceId).isEqualTo(1)
+        assertThat(info.audioControlInterfaceNumber).isEqualTo(1)
         assertThat(info.streamingInterfaceNumber).isEqualTo(2)
     }
 

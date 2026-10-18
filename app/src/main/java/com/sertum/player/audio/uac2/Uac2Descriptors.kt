@@ -17,6 +17,7 @@ data class Uac2Format(
 
 data class Uac2DescriptorInfo(
     val clockSourceId: Int?,
+    val audioControlInterfaceNumber: Int?,
     val streamingInterfaceNumber: Int?,
     val formats: List<Uac2Format>,
 ) {
@@ -41,6 +42,7 @@ private const val ENDPOINT_TYPE_ISOCHRONOUS = 0x01
 /** Walks the descriptor chain in [raw] (a device's raw configuration descriptors). */
 fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
     var clockSourceId: Int? = null
+    var audioControlInterface: Int? = null
     var streamingInterface: Int? = null
     val formats = mutableListOf<Uac2Format>()
 
@@ -65,8 +67,9 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
                 currentAlt = raw[payload + 1].toInt() and 0xFF
                 val interfaceClass = raw[payload + 3].toInt() and 0xFF
                 currentSubclass = raw[payload + 4].toInt() and 0xFF
-                if (interfaceClass == CLASS_AUDIO && currentSubclass == SUBCLASS_AUDIOSTREAMING) {
-                    streamingInterface = number
+                if (interfaceClass == CLASS_AUDIO) {
+                    if (currentSubclass == SUBCLASS_AUDIOCONTROL) audioControlInterface = number
+                    if (currentSubclass == SUBCLASS_AUDIOSTREAMING) streamingInterface = number
                 }
                 pendingSubslot = 0
                 pendingBitDepth = 0
@@ -110,5 +113,5 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
         }
         index += length
     }
-    return Uac2DescriptorInfo(clockSourceId, streamingInterface, formats)
+    return Uac2DescriptorInfo(clockSourceId, audioControlInterface, streamingInterface, formats)
 }

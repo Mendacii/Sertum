@@ -23,6 +23,9 @@ object Uac2Transport {
 
     external fun nativeStart(handle: Long): Boolean
     external fun nativeStop(handle: Long)
+
+    /** Drops queued audio; used on seek. */
+    external fun nativeFlush(handle: Long)
     external fun nativeClose(handle: Long)
 
     /** Queues PCM; returns bytes accepted, 0 when the queue is full. */
