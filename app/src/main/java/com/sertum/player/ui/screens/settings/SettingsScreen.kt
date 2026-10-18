@@ -220,8 +220,12 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 emphasis = TileEmphasis.TOGGLE,
                 selected = state.outputMode == OutputMode.STANDARD,
                 onClick = {
-                    SettingsStateHolder.update { it.copy(outputMode = OutputMode.STANDARD) }
-                    app.playbackController.switchOutputMode(OutputMode.STANDARD)
+                    // Only record the choice once the route actually changed. The coordinator is
+                    // the authority on routing; a copy updated before the attempt is how the tile
+                    // ended up showing a mode the audio never entered.
+                    if (app.playbackController.switchOutputMode(OutputMode.STANDARD)) {
+                        SettingsStateHolder.update { it.copy(outputMode = OutputMode.STANDARD) }
+                    }
                 },
             )
             SettingsTile(
@@ -230,8 +234,9 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                 emphasis = TileEmphasis.TOGGLE,
                 selected = state.outputMode == OutputMode.USB_EXCLUSIVE,
                 onClick = {
-                    SettingsStateHolder.update { it.copy(outputMode = OutputMode.USB_EXCLUSIVE) }
-                    app.playbackController.switchOutputMode(OutputMode.USB_EXCLUSIVE)
+                    if (app.playbackController.switchOutputMode(OutputMode.USB_EXCLUSIVE)) {
+                        SettingsStateHolder.update { it.copy(outputMode = OutputMode.USB_EXCLUSIVE) }
+                    }
                 },
             )
         }

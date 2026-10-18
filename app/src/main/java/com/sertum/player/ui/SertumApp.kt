@@ -1,5 +1,7 @@
 package com.sertum.player.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Snackbar
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -179,7 +181,20 @@ fun SertumApp(
     // by tapping the theme option, which injected input cannot do.
     SertumTheme(darkTheme = initialDarkTheme ?: settings.darkTheme) {
         Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = {
+                // The default snackbar uses `inverseSurface`, which this theme leaves at Material's
+                // baseline - a white bubble over a black page. The cover backdrop is the token for
+                // "raised but neutral", so the message reads as part of the app in either theme.
+                SnackbarHost(snackbarHostState) { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        actionColor = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                }
+            },
             bottomBar = {
                 // The mini player stays on every browsing surface; the full
                 // player is a full-screen bottom sheet of its own. When the

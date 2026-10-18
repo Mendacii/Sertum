@@ -319,8 +319,15 @@ class PlaybackCoordinator(
 
     // ---- output routing (PRD 7.13: stop, clear state, reopen at target rate) ----
 
-    fun switchOutputMode(mode: OutputMode) {
-        if (mode == _outputMode.value) return
+    /**
+     * Switches the output route, cold-restarting the player.
+     *
+     * Returns whether the route actually changed: a refusal (no DAC for the exclusive route) must
+     * not leave the caller believing it succeeded, or the UI state it keeps drifts from the audio
+     * state it describes.
+     */
+    fun switchOutputMode(mode: OutputMode): Boolean {
+        if (mode == _outputMode.value) return true
         // Exclusive output is exclusive *on the DAC*. Asking for it with nothing plugged in used to
         // flip the flag anyway, and the stream then opened exclusively on whatever the default
         // output was - the phone's own speaker - while the UI reported USB exclusive. Refuse here,
@@ -329,7 +336,7 @@ class PlaybackCoordinator(
             diagnostics.log(DiagnosticLevel.WARNING, "output", "USB exclusive refused: no USB audio device")
             _userMessage.value = appContext.getString(com.sertum.player.R.string.usb_exclusive_requires_dac)
             updateUiState()
-            return
+            return false
         }
         _outputMode.value = mode
         val wasPlaying = player.isPlaying
@@ -341,6 +348,7 @@ class PlaybackCoordinator(
             if (wasPlaying) player.play() else player.pause()
         }
         updateUiState()
+        return true
     }
 
     /** The attached DAC's `AudioDeviceInfo.id`, or null when there is none. */
