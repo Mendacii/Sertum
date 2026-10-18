@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 /**
@@ -44,9 +45,20 @@
 
 namespace {
 
-constexpr int kUrbsInFlight = 8;
+/**
+ * URBs kept queued, each covering one millisecond.
+ *
+ * Eight was chosen for the round-trip latency and measured against this device: a foreground
+ * stream keeps a 3 ms worst gap between completions, but leaving the app once stretched that to
+ * 11.6 ms of scheduling delay, and eight milliseconds of depth cannot absorb the difference - the
+ * kernel runs dry and the DAC gets silence for the remainder, which is the click heard when
+ * switching away. Thirty-two milliseconds covers that stall with room to spare and costs 18 KB.
+ */
+constexpr int kUrbsInFlight = 32;
 constexpr int kPacketsPerUrb = 8;
 constexpr int kMicroframesPerSecond = 8000;
+/** Nice value for the pump thread; -8 is aggressive without needing CAP_SYS_NICE. */
+constexpr int kPumpPriority = -8;
 
 struct UrbSlot {
     usbdevfs_urb *urb = nullptr;
@@ -131,6 +143,17 @@ struct IsoStream {
      * writes and the player kept counting. Writes now fail fast once this is set.
      */
     std::atomic<bool> dead{false};
+
+    /**
+     * Longest gap between two completed URBs, in microseconds.
+     *
+     * A process-wide stall does not show up in `underruns`: nothing fills a packet, the kernel just
+     * runs out of queued URBs and the device gets silence. Eight milliseconds of pipeline is easily
+     * consumed by a background transition, so this number is what says whether the buffer is deep
+     * enough for the stalls this device actually has.
+     */
+    std::atomic<long long> maxGapUs{0};
+    std::chrono::steady_clock::time_point lastReap = std::chrono::steady_clock::now();
     std::atomic<int> lastError{0};
 };
 
@@ -289,6 +312,12 @@ void consumeFeedback(IsoStream *stream, UrbSlot &slot) {
 }
 
 void pumpLoop(IsoStream *stream) {
+    // Best effort: the audio priority keeps this thread ahead of ordinary work, which is what the
+    // 11.6 ms background stall was made of. A refusal here is not fatal - the deeper pipeline in
+    // kUrbsInFlight is what actually makes the stream hold.
+    const int priority = setpriority(PRIO_PROCESS, 0, kPumpPriority);
+    LOGI("pump priority %d -> %d (errno=%d)", kPumpPriority, getpriority(PRIO_PROCESS, 0),
+         priority == 0 ? 0 : errno);
     while (stream->running.load()) {
         usbdevfs_urb *done = nullptr;
         const int rc = ioctl(stream->fd, USBDEVFS_REAPURBNDELAY, &done);
@@ -296,6 +325,17 @@ void pumpLoop(IsoStream *stream) {
             int packetErrors = 0;
             for (int i = 0; i < done->number_of_packets; ++i) {
                 if (done->iso_frame_desc[i].status != 0) packetErrors++;
+            }
+            // Only steady state: the first reaps arrive after one whole pipeline of audio, which is
+            // not a stall and would otherwise dominate the maximum forever.
+            if (stream->completed.load() > kUrbsInFlight * 2) {
+                const auto now = std::chrono::steady_clock::now();
+                const long long gap =
+                    std::chrono::duration_cast<std::chrono::microseconds>(now - stream->lastReap).count();
+                stream->lastReap = now;
+                if (gap > stream->maxGapUs.load()) stream->maxGapUs.store(gap);
+            } else {
+                stream->lastReap = std::chrono::steady_clock::now();
             }
             bool feedbackDone = false;
             for (auto &slot : stream->feedbackSlots) {
@@ -442,6 +482,9 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, j
     for (auto &slot : stream->feedbackSlots) {
         submitFeedbackSlot(stream, slot);
     }
+    // The gap metric measures stalls within a run; without this reset it would count the pause
+    // between two runs as a two-second freeze.
+    stream->lastReap = std::chrono::steady_clock::now();
     stream->running.store(true);
     stream->pump = std::thread(pumpLoop, stream);
     LOGI("started: %d URBs x %d packets", kUrbsInFlight, kPacketsPerUrb);
@@ -454,10 +497,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStop(JNIEnv *, jobject, jl
     if (stream == nullptr) return;
     teardown(stream);
     LOGI("stopped: submitted=%lld completed=%lld failed=%lld frames=%lld primed=%lld "
-         "underruns=%lld feedback=%lld ratePpm=%d",
+         "underruns=%lld feedback=%lld ratePpm=%d maxGapUs=%lld",
          stream->submitted.load(), stream->completed.load(), stream->failed.load(),
          stream->framesSent.load(), stream->primed.load(), stream->underruns.load(),
-         stream->feedbackSeen.load(), stream->feedbackPpm.load());
+         stream->feedbackSeen.load(), stream->feedbackPpm.load(), stream->maxGapUs.load());
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -512,7 +555,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);
-    jlong values[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    jlong values[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     if (stream != nullptr) {
         values[0] = stream->submitted.load();
         values[1] = stream->completed.load();
@@ -524,9 +567,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject
         values[7] = stream->feedbackPpm.load();
         values[8] = stream->primed.load();
         values[9] = stream->dead.load() ? 1 : 0;
+        values[10] = stream->maxGapUs.load();
     }
-    jlongArray result = env->NewLongArray(10);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 10, values);
+    jlongArray result = env->NewLongArray(11);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 11, values);
     return result;
 }
 
