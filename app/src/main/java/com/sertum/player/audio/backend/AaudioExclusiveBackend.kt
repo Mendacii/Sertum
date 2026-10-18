@@ -46,9 +46,20 @@ class AaudioExclusiveBackend : AudioOutputBackend {
     var streamInfo = AaudioStreamInfo()
         private set
 
+    /**
+     * Invoked once when the stream died underneath us.
+     *
+     * The coordinator turns this into a pause, not a track failure: losing the DAC is not the
+     * track's fault, and Media3 would otherwise skip to the next song.
+     */
+    var onDeviceLost: (() -> Unit)? = null
+
+    private var deviceLostReported = false
+
     override fun open(spec: StreamSpec): Result<Unit> {
         close()
         started = false
+        deviceLostReported = false
         this.spec = spec
         val opened = AaudioNative.nativeOpen(spec.sampleRate, spec.channelCount, spec.bitDepth, spec.deviceId)
         if (opened == 0L) return Result.failure(IllegalStateException("AAudio open failed"))
@@ -86,11 +97,24 @@ class AaudioExclusiveBackend : AudioOutputBackend {
             return Result.failure(IllegalStateException("unknown stream layout $streamInfo"))
         }
         val expected = length / frameBytes
+        if (AaudioNative.nativeGetFatal(handle)) {
+            // Same contract as the UAC2 backend: signal out of band, answer zero frames. A failure
+            // here would be thrown from AudioSink.pause() and crash the player thread.
+            notifyDeviceLost()
+            return Result.success(0)
+        }
         val written = AaudioNative.nativeWrite(handle, frame, offset, length)
         if (written < 0) {
             return Result.failure(IllegalStateException("AAudio write failed res=$written expected=$expected"))
         }
         return Result.success(written.coerceAtMost(expected))
+    }
+
+    private fun notifyDeviceLost() {
+        if (deviceLostReported) return
+        deviceLostReported = true
+        Log.w(TAG, "device lost handle=$handle")
+        onDeviceLost?.invoke()
     }
 
     override fun pause(): Result<Unit> {

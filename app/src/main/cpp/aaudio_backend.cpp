@@ -24,6 +24,14 @@ struct StreamEntry {
     AAudioStream *stream = nullptr;
     std::mutex io;
     bool closed = false;
+    /**
+     * Set by AAudio when the stream fails underneath us - a device unplugged mid-stream, mostly.
+     *
+     * Without this the only symptom was `AAudioStream_write` returning an error that looked like
+     * backpressure, so the renderer kept retrying and the UI kept claiming to play. Held through a
+     * shared_ptr because the callback receives a raw pointer and may fire on any thread.
+     */
+    std::shared_ptr<std::atomic<bool>> fatal;
 };
 
 static std::unordered_map<jlong, std::shared_ptr<StreamEntry>> g_streams;
@@ -33,6 +41,16 @@ static std::atomic<jlong> g_next{1};
 /** How long one write may block before reporting backpressure, and the budget for the whole call. */
 static constexpr int64_t kWriteSliceMs = 20;
 static constexpr int64_t kWriteBudgetMs = 200;
+
+/** Returned by write when the device is gone, as distinct from -1 (bad call) or 0 (full). */
+static constexpr int kDeviceLost = -4;
+
+/** AAudio's error callback: never blocks, only records that this stream is finished. */
+static void onStreamError(AAudioStream *, void *userData, aaudio_result_t error) {
+    auto *flag = static_cast<std::atomic<bool> *>(userData);
+    if (flag != nullptr) flag->store(true, std::memory_order_relaxed);
+    LOGW("stream error: %d", static_cast<int>(error));
+}
 
 static aaudio_format_t formatForBits(int bits) {
     return bits >= 24 ? AAUDIO_FORMAT_PCM_I24_PACKED : AAUDIO_FORMAT_PCM_I16;
@@ -58,6 +76,8 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
         LOGW("builder create failed");
         return 0;
     }
+    auto fatal = std::make_shared<std::atomic<bool>>(false);
+    AAudioStreamBuilder_setErrorCallback(builder, onStreamError, fatal.get());
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
     AAudioStreamBuilder_setSampleRate(builder, sampleRate);
     AAudioStreamBuilder_setChannelCount(builder, channels);
@@ -86,6 +106,7 @@ Java_com_sertum_player_audio_backend_AaudioNative_nativeOpen(
 
     auto entry = std::make_shared<StreamEntry>();
     entry->stream = stream;
+    entry->fatal = fatal;
     const jlong handle = g_next.fetch_add(1);
     {
         std::lock_guard<std::mutex> lock(g_mu);
@@ -216,3 +237,10 @@ GETTER(DeviceId, jint, AAudioStream_getDeviceId)
 GETTER(PerformanceMode, jint, AAudioStream_getPerformanceMode)
 GETTER(FramesPerBurst, jint, AAudioStream_getFramesPerBurst)
 GETTER(FramesRead, jlong, AAudioStream_getFramesRead)
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_sertum_player_audio_backend_AaudioNative_nativeGetFatal(JNIEnv *, jobject, jlong handle) {
+    auto entry = findEntry(handle);
+    if (!entry) return JNI_FALSE;
+    return (entry->fatal && entry->fatal->load(std::memory_order_relaxed)) ? JNI_TRUE : JNI_FALSE;
+}

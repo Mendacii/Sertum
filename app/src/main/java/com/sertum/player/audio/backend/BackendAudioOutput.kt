@@ -92,20 +92,21 @@ class BackendAudioOutput(
 
     override fun play() {
         if (released) return
-        backend.play().getOrElse {
-            throw IllegalStateException("backend play failed", it)
-        }
-        startedOnce = true
+        // Never throw from AudioSink.play(): Media3 calls it outside a try, so a backend that cannot
+        // start (the DAC left just as play was pressed) would kill the process. Leaving the stream
+        // unstarted makes the next write retry, and a lost device reports itself out of band.
+        if (backend.play().isSuccess) startedOnce = true
     }
 
     override fun pause() {
         if (released) return
+        // AudioSink.pause() may not throw: Media3 calls it while tearing renderers down and does not
+        // catch WriteException there, so a backend that failed to drain (a DAC unplugged mid-stream,
+        // typically) would take the whole process down. Whatever is left stays pending.
         val before = pendingFrames
-        drainPending()
+        runCatching { drainPending() }
         backendSubmittedFrames += (before - pendingFrames).toLong()
-        backend.pause().getOrElse {
-            throw IllegalStateException("backend pause failed", it)
-        }
+        runCatching { backend.pause() }
         startedOnce = false
     }
 

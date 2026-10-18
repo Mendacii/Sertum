@@ -124,4 +124,5 @@
          do not already imply the answer need one. -->
     <string name="settings_info_background_summary">On HyperOS/MIUI, allow Sertum in battery optimization and autostart settings so playback keeps running with the screen off.</string>
     <string name="settings_info_close">Close</string>
+    <string name="usb_permission_pending">Allow USB access to send audio straight to the DAC; playback uses the fallback route until then.</string>
 </resources>

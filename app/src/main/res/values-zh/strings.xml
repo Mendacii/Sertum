@@ -121,4 +121,5 @@
     <!-- 该分节是做什么用的，排在逐项解释之前。只有「选项本身说明不了用途」的分节才需要。 -->
     <string name="settings_info_background_summary">在 HyperOS/MIUI 上，请在电池优化与自启动设置中允许 Sertum，锁屏后播放才能持续。</string>
     <string name="settings_info_close">关闭</string>
+    <string name="usb_permission_pending">许可 USB 访问后才会直接输出到 DAC，当前使用降级路径。</string>
 </resources>

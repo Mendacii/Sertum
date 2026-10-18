@@ -26,4 +26,7 @@ object AaudioNative {
     external fun nativeGetPerformanceMode(handle: Long): Int
     external fun nativeGetFramesPerBurst(handle: Long): Int
     external fun nativeGetFramesRead(handle: Long): Long
+
+    /** True once AAudio reported the stream failed - a device unplugged, typically. */
+    external fun nativeGetFatal(handle: Long): Boolean
 }

@@ -35,6 +35,16 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
      */
     private var transportRunning = false
 
+    /**
+     * Invoked once when the transport reports the device is gone.
+     *
+     * Deliberately not surfaced as a write failure: Media3 treats that as a bad track and skips it,
+     * while an unplug should pause and keep the queue.
+     */
+    var onDeviceLost: (() -> Unit)? = null
+
+    private var deviceLostReported = false
+
     override fun open(spec: StreamSpec): Result<Unit> {
         releaseStream()
         val opened = session.openStream(spec.sampleRate, spec.channelCount, spec.bitDepth)
@@ -46,6 +56,7 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
         sampleRate = spec.sampleRate
         position.reset()
         transportRunning = false
+        deviceLostReported = false
         capabilities = BackendCapabilities(supportsHardwareVolume = true, isExclusive = true)
         return Result.success(Unit)
     }
@@ -54,6 +65,12 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
         val current = stream ?: return Result.failure(IllegalStateException("no UAC2 stream"))
         if (frameBytes <= 0) return Result.failure(IllegalStateException("unknown UAC2 frame size"))
         val accepted = Uac2Transport.nativeWrite(current.handle, frame, offset, length)
+        if (accepted == DEVICE_GONE) {
+            // Report the loss out of band and answer "no frames accepted", never a failure: Media3
+            // drains in pause(), where a WriteException is not caught and takes the process down.
+            notifyDeviceLost()
+            return Result.success(0)
+        }
         if (accepted < 0) {
             return Result.failure(IllegalStateException("UAC2 write failed: $accepted"))
         }
@@ -109,6 +126,12 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
      */
     override fun getBufferSizeInFrames(): Int = if (sampleRate > 0) sampleRate / 20 else 0
 
+    private fun notifyDeviceLost() {
+        if (deviceLostReported) return
+        deviceLostReported = true
+        onDeviceLost?.invoke()
+    }
+
     private fun stopTransport() {
         if (!transportRunning) return
         transportRunning = false
@@ -120,5 +143,10 @@ class Uac2Backend(private val session: Uac2Session) : AudioOutputBackend {
         val current = stream ?: return
         stream = null
         runCatching { session.closeStream(current) }
+    }
+
+    private companion object {
+        /** Mirrors `kDeviceLost` in uac2_transport.cpp: the ring is fine, the device is not. */
+        const val DEVICE_GONE = -2
     }
 }

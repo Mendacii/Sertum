@@ -122,11 +122,25 @@ struct IsoStream {
     std::atomic<long long> primed{0};
     std::atomic<long long> underruns{0};
     std::atomic<bool> pcmSeen{false};
+
+    /**
+     * The device went away underneath the transport.
+     *
+     * usbfs reports it as an ioctl failure, and the pump thread stopped - but `nativeWrite` would
+     * have kept accepting bytes into a ring nothing drains, so the backend reported successful
+     * writes and the player kept counting. Writes now fail fast once this is set.
+     */
+    std::atomic<bool> dead{false};
     std::atomic<int> lastError{0};
 };
 
 IsoStream *fromHandle(jlong handle) {
     return reinterpret_cast<IsoStream *>(handle);
+}
+
+/** Errors that mean the device is gone rather than this call being wrong. */
+bool isFatalErrno(int code) {
+    return code == ENODEV || code == ESHUTDOWN || code == EPROTO || code == ENXIO;
 }
 
 int nextMicroframeFrames(IsoStream *stream) {
@@ -215,8 +229,10 @@ bool submitSlot(IsoStream *stream, UrbSlot &slot) {
     slot.urb->error_count = 0;
 
     if (ioctl(stream->fd, USBDEVFS_SUBMITURB, slot.urb) < 0) {
-        stream->lastError.store(errno);
-        LOGE("submiturb failed: errno=%d %s", errno, strerror(errno));
+        const int code = errno;
+        stream->lastError.store(code);
+        if (isFatalErrno(code)) stream->dead.store(true);
+        LOGE("submiturb failed: errno=%d %s", code, strerror(code));
         return false;
     }
     slot.inFlight.store(true);
@@ -312,8 +328,10 @@ void pumpLoop(IsoStream *stream) {
             continue;
         }
         if (rc < 0 && errno != EAGAIN) {
-            stream->lastError.store(errno);
-            LOGE("reapurb failed: errno=%d %s", errno, strerror(errno));
+            const int code = errno;
+            stream->lastError.store(code);
+            if (isFatalErrno(code)) stream->dead.store(true);
+            LOGE("reapurb failed: errno=%d %s", code, strerror(code));
             stream->running.store(false);
             break;
         }
@@ -465,6 +483,8 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeWrite(
     IsoStream *stream = fromHandle(handle);
     if (stream == nullptr || data == nullptr || offset < 0 || length <= 0) return -1;
     if (offset + length > env->GetArrayLength(data)) return -1;
+    // -1 is "bad call", 0 is "ring full"; -2 tells the backend the device is gone.
+    if (stream->dead.load()) return -2;
     std::vector<uint8_t> chunk(static_cast<size_t>(length));
     env->GetByteArrayRegion(data, offset, length, reinterpret_cast<jbyte *>(chunk.data()));
     const size_t budget =
@@ -492,7 +512,7 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeFlush(JNIEnv *, jobject, j
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject, jlong handle) {
     IsoStream *stream = fromHandle(handle);
-    jlong values[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    jlong values[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     if (stream != nullptr) {
         values[0] = stream->submitted.load();
         values[1] = stream->completed.load();
@@ -503,9 +523,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStats(JNIEnv *env, jobject
         values[6] = stream->feedbackSeen.load();
         values[7] = stream->feedbackPpm.load();
         values[8] = stream->primed.load();
+        values[9] = stream->dead.load() ? 1 : 0;
     }
-    jlongArray result = env->NewLongArray(9);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 9, values);
+    jlongArray result = env->NewLongArray(10);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 10, values);
     return result;
 }
 

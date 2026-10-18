@@ -1,5 +1,6 @@
 package com.sertum.player.audio
 
+import com.sertum.player.audio.uac2.Uac2PermissionPending
 import com.sertum.player.audio.uac2.Uac2DeviceManager
 import com.sertum.player.audio.backend.Uac2Backend
 import com.sertum.player.ui.settings.SettingsStateHolder
@@ -117,6 +118,14 @@ class PlaybackCoordinator(
     private var uac2Backend: Uac2Backend? = null
     private var exclusiveUsesUac2 = false
 
+    /**
+     * True while an exclusive backend is being installed.
+     *
+     * `open()` publishes the permission grant, and the collector runs immediately on the main
+     * dispatcher - which made it re-enter this very install and build the backend twice.
+     */
+    private var installingExclusive = false
+
     /** Set by MainActivity; requests POST_NOTIFICATIONS before the first playback. */
     @Volatile
     var notificationPermissionRequester: (() -> Unit)? = null
@@ -145,6 +154,39 @@ class PlaybackCoordinator(
     val player: Player get() = engine.player
 
     init {
+        // A DAC unplugged mid-stream is a pause, not a failed track: Media3 would otherwise mark
+        // the song unplayable and skip it.
+        exclusiveBackend.onDeviceLost = { scope.launch { onUsbDeviceDetached() } }
+
+        // Plugging a DAC in raises the permission dialog, and the attach handler has already tried
+        // by then. Without this the fallback stick until the user toggles the mode by hand.
+        scope.launch {
+            uac2Manager.permissionGranted.collect { granted ->
+                if (!granted || installingExclusive) return@collect
+                when {
+                    // Already on the exclusive route but still on the fallback backend.
+                    _outputMode.value == OutputMode.USB_EXCLUSIVE && !exclusiveUsesUac2 -> {
+                        diagnostics.log(
+                            DiagnosticLevel.INFO,
+                            "uac2",
+                            "permission granted; retrying the UAC2 route",
+                        )
+                        retryExclusiveRoute()
+                    }
+                    // The gate kept us on the standard route; the grant unblocks the switch.
+                    _outputMode.value == OutputMode.STANDARD &&
+                        attachedUsbDeviceId() != null &&
+                        SettingsStateHolder.state.value.autoExclusiveOnUsbAttach -> {
+                        diagnostics.log(
+                            DiagnosticLevel.INFO,
+                            "uac2",
+                            "permission granted; selecting USB exclusive",
+                        )
+                        switchOutputMode(OutputMode.USB_EXCLUSIVE)
+                    }
+                }
+            }
+        }
         engine.router.exclusiveBackend = exclusiveBackend
         // Output mode is intentionally not restored from storage: it starts on
         // the standard route every launch. Restoring "USB exclusive" without
@@ -351,6 +393,26 @@ class PlaybackCoordinator(
             updateUiState()
             return false
         }
+        // Permission is granted asynchronously, and entering the exclusive mode before it
+        // arrives meant the AAudio fallback ran while the UI said "USB exclusive" - volume still
+        // adjustable, badge yellow, and no way for the user to tell what went wrong. Ask, stay
+        // where we are, and let the grant switch the route.
+        if (mode == OutputMode.USB_EXCLUSIVE) {
+            val device = uac2Manager.findDevice()
+            if (device != null && !uac2Manager.hasPermission(device)) {
+                uac2Manager.requestPermission(device)
+                diagnostics.log(
+                    DiagnosticLevel.INFO,
+                    "output",
+                    "USB exclusive held back: waiting for USB permission",
+                )
+                _userMessage.value = appContext.getString(
+                    com.sertum.player.R.string.usb_permission_pending,
+                )
+                updateUiState()
+                return false
+            }
+        }
         if (mode == OutputMode.USB_EXCLUSIVE) installUac2OrFallback() else teardownUac2()
         _outputMode.value = mode
         val wasPlaying = player.isPlaying
@@ -378,11 +440,22 @@ class PlaybackCoordinator(
      * Reported either way: a fallback that nobody records is the silent downgrade the PRD forbids.
      */
     private fun installUac2OrFallback() {
+        installingExclusive = true
+        try {
+            installExclusiveBackend()
+        } finally {
+            installingExclusive = false
+        }
+    }
+
+    private fun installExclusiveBackend() {
         teardownUac2()
         val result = uac2Manager.open()
         val session = result.getOrNull()
         if (session != null) {
-            val backend = Uac2Backend(session)
+            val backend = Uac2Backend(session).apply {
+                onDeviceLost = { scope.launch { onUsbDeviceDetached() } }
+            }
             uac2Backend = backend
             engine.router.exclusiveBackend = backend
             exclusiveUsesUac2 = true
@@ -395,12 +468,34 @@ class PlaybackCoordinator(
         } else {
             engine.router.exclusiveBackend = exclusiveBackend
             exclusiveUsesUac2 = false
+            val failure = result.exceptionOrNull()
             diagnostics.log(
                 DiagnosticLevel.WARNING,
                 "output",
-                "UAC2 unavailable (${result.exceptionOrNull()?.message}); using AAudio exclusive",
+                "UAC2 unavailable (${failure?.message}); using AAudio exclusive",
             )
+            if (failure is Uac2PermissionPending) {
+                // The permission dialog is still on screen; say so instead of silently serving a
+                // route the badge would call exclusive.
+                _userMessage.value = appContext.getString(
+                    com.sertum.player.R.string.usb_permission_pending,
+                )
+            }
         }
+    }
+
+    /** Re-installs the exclusive backend and resumes where the user left off. */
+    private fun retryExclusiveRoute() {
+        val wasPlaying = player.isPlaying
+        val hadTrack = player.currentMediaItem != null
+        player.pause()
+        player.stop()
+        installUac2OrFallback()
+        if (hadTrack) {
+            player.prepare()
+            if (wasPlaying) player.play()
+        }
+        updateUiState()
     }
 
     private fun teardownUac2() {
@@ -550,16 +645,15 @@ class PlaybackCoordinator(
 
     private fun bitPerfectState(): BitPerfectState = when (displayOutputMode()) {
         OutputMode.USB_EXCLUSIVE -> {
+            // Only the UAC2 route is measured as bypassing the mixer. AAudio reports itself
+            // exclusive while still rendering through the 384 kHz AudioFlinger mixer on this phone,
+            // so a green badge on that route was a claim the audio path could not back.
             val depthPreserved = engine.router.isSourceDepthPreserved()
-            // The UAC2 route has no mixer and no system volume in it, so only the depth can spoil it.
-            // The AAudio route still passes through both, hence the extra conditions.
-            val routeIntact = exclusiveUsesUac2 ||
-                (
-                    exclusiveBackend.capabilities.isExclusive &&
-                        streamIsOnUsbDevice() &&
-                        systemMusicVolume01() >= 1f
-                    )
-            if (depthPreserved && routeIntact) BitPerfectState.INTACT else BitPerfectState.DEGRADED
+            if (exclusiveUsesUac2 && depthPreserved) {
+                BitPerfectState.INTACT
+            } else {
+                BitPerfectState.DEGRADED
+            }
         }
         else -> BitPerfectState.NOT_APPLICABLE
     }

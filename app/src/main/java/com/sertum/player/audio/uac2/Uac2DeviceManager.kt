@@ -20,6 +20,15 @@ import kotlinx.coroutines.flow.asStateFlow
  * because a claimed-looking session that never opened is exactly the "silent downgrade" the PRD
  * forbids.
  */
+/**
+ * The user has not answered the USB permission dialog yet.
+ *
+ * Distinct from a real failure because the answer arrives later, and the caller has to try again
+ * when it does - the bug that made a freshly plugged DAC stay on the fallback route until the mode
+ * was toggled by hand.
+ */
+class Uac2PermissionPending : IllegalStateException("USB permission not granted yet")
+
 class Uac2DeviceManager(private val context: Context) {
 
     private val usbManager = context.getSystemService(UsbManager::class.java)
@@ -88,7 +97,7 @@ class Uac2DeviceManager(private val context: Context) {
         val device = findDevice() ?: return Result.failure(IllegalStateException("no USB audio device"))
         if (!usbManager.hasPermission(device)) {
             requestPermission(device)
-            return Result.failure(IllegalStateException("USB permission not granted yet"))
+            return Result.failure(Uac2PermissionPending())
         }
         val connection = usbManager.openDevice(device)
             ?: return Result.failure(IllegalStateException("openDevice failed"))
