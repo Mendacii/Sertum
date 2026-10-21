@@ -281,4 +281,110 @@ class BackendAudioOutputEndOfStreamTest {
         assertThat(writeException.errorCode).isEqualTo(PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED)
         assertThat(writeException.isRecoverable).isTrue()
     }
+
+    // ---- the stop() path: Media3 declares the stream drained before it checks isEnded() ----
+
+    @Test
+    fun `after media3 stops the sink the position reports the accepted total`() {
+        val rate = 44_100
+        val accepted = 1_000L
+
+        // Worst case after stop(): the backend head is gone (a reset stream reports 0).
+        val position = resolvedPositionUs(
+            backendPositionUs = 0L,
+            flushedUs = 0L,
+            acceptedFrames = accepted,
+            submittedFrames = 0L,
+            pendingFrames = 0,
+            sampleRate = rate,
+            stoppedBySink = true,
+        )
+
+        assertThat(media3HasPendingData(accepted, position, rate)).isFalse()
+    }
+
+    private class GreedyBackend : AudioOutputBackend {
+        var headUs = 0L
+        override val capabilities = BackendCapabilities(supportsHardwareVolume = false, isExclusive = true)
+        override fun open(spec: StreamSpec) = Result.success(Unit)
+        override fun writePcm(frame: ByteArray, offset: Int, length: Int) = Result.success(length / 4)
+        override fun pause() = Result.success(Unit)
+        override fun play() = Result.success(Unit)
+        override fun flush() = Result.success(Unit)
+        override fun stop() = Result.success(Unit)
+        override fun release() = Unit
+        override fun onVolumeChanged(volume01: Float) = Unit
+        override fun getPositionUs(): Long = headUs
+        override fun getBufferSizeInFrames(): Int = 1_024
+    }
+
+    @Test
+    fun `stopping the sink keeps the reported position at the accepted total`() {
+        // The device failure this guards (2026-10-22 03:00:55): the sink had played the whole track,
+        // Media3 called AudioOutput.stop() from playToEndOfStream(), and a position that collapsed
+        // there kept hasPendingData() true, so the player never reached STATE_ENDED and a stuck-player
+        // timeout fired 10 s later.
+        var nowMs = 1_000L
+        val backend = GreedyBackend()
+        val output = BackendAudioOutput(
+            backend = backend,
+            outputConfig = outputConfig(),
+            targetBitDepth = 16,
+            playWhenReady = { true },
+            elapsedRealtimeMs = { nowMs },
+        )
+        val frames = 1_024
+
+        assertThat(output.write(stereoSilence(frames), frames, C.TIME_END_OF_SOURCE)).isTrue()
+
+        // The backend head has not moved, yet the whole buffer was accepted: before stop() the
+        // clamp still reports the head rather than pretending the tail is played.
+        assertThat(output.getPositionUs()).isEqualTo(0L)
+
+        nowMs = 2_000L
+        output.stop()
+
+        val position = output.getPositionUs()
+        assertThat(media3PositionFrames(position, 44_100)).isEqualTo(frames.toLong())
+        assertThat(media3HasPendingData(frames.toLong(), position, 44_100)).isFalse()
+    }
+
+    @Test
+    fun `a flush after a stop starts a fresh accepted epoch`() {
+        var nowMs = 1_000L
+        val output = BackendAudioOutput(
+            backend = GreedyBackend(),
+            outputConfig = outputConfig(),
+            targetBitDepth = 16,
+            playWhenReady = { true },
+            elapsedRealtimeMs = { nowMs },
+        )
+        val frames = 1_024
+
+        output.write(stereoSilence(frames), frames, C.TIME_END_OF_SOURCE)
+        output.stop()
+        assertThat(media3PositionFrames(output.getPositionUs(), 44_100)).isEqualTo(frames.toLong())
+
+        // A flush is what a mid-stream stop is followed by; Media3 zeroes its own written count
+        // there too, so the position must not keep the old total.
+        nowMs = 3_000L
+        output.flush()
+
+        assertThat(output.getPositionUs()).isEqualTo(0L)
+    }
+
+    @Test
+    fun `a tail counts as drained only within the counter slack`() {
+        val rate = 44_100
+        // 744 frames in microseconds, and the frame below it.
+        val atSlack = 16_880L
+        val belowSlack = 16_850L
+
+        assertThat(isTailDrained(atSlack, submittedFrames = 1_000L, pendingFrames = 0, sampleRate = rate))
+            .isTrue()
+        assertThat(isTailDrained(belowSlack, submittedFrames = 1_000L, pendingFrames = 0, sampleRate = rate))
+            .isFalse()
+        assertThat(isTailDrained(atSlack, submittedFrames = 1_000L, pendingFrames = 1, sampleRate = rate))
+            .isFalse()
+    }
 }

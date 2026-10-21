@@ -96,6 +96,17 @@ internal fun usToFrames(us: Long, sampleRate: Int): Long =
 internal const val POSITION_SATURATION_SLACK_FRAMES = 256L
 
 /**
+ * How long the sink may go without accepting a frame, while playback is wanted, before the tail
+ * diagnostics call it idle. 1.5 s is longer than any legitimate gap in the PRD matrix - the deepest
+ * device buffer is a few hundred milliseconds - and shorter than Media3's own 10 s stuck detector,
+ * so the log line exists before the timeout does.
+ */
+internal const val SINK_IDLE_MS = 1_500L
+
+/** At most one tail-diagnostic line per second: enough to follow a stall, not enough to flood. */
+private const val SINK_LOG_INTERVAL_MS = 1_000L
+
+/**
  * The position reported to Media3, clamped the way `AudioTrackPositionTracker.getCurrentPositionUs`
  * clamps `AudioTrackAudioOutput`: never beyond the frames Media3 handed us.
  *
@@ -122,18 +133,42 @@ internal fun resolvedPositionUs(
     pendingFrames: Int,
     sampleRate: Int,
     slackFrames: Long = POSITION_SATURATION_SLACK_FRAMES,
+    stoppedBySink: Boolean = false,
 ): Long {
     if (sampleRate <= 0) return backendPositionUs + flushedUs
     val raw = backendPositionUs + flushedUs
     // The cap is in the same epoch as `raw`: frames burned by the last flush are added to the
     // accepted frames of this stretch, so a seek does not make the position jump backwards.
     val cap = framesToUs(acceptedFrames, sampleRate) + flushedUs
-    val playedFrames = usToFrames(backendPositionUs, sampleRate)
-    val tailOnly = pendingFrames == 0 &&
-        submittedFrames > 0L &&
-        playedFrames >= submittedFrames - slackFrames
-    return if (tailOnly) cap else minOf(raw, cap)
+    // Media3 calls AudioOutput.stop() from DefaultAudioSink.playPendingData(), which
+    // playToEndOfStream() invokes *before* it sets handledEndOfStream - i.e. stop() means "the sink
+    // is drained", not "tear down". isEnded() is evaluated immediately after, and it is
+    // handledEndOfStream && !(writtenFrames > usToFrames(getPositionUs())): every frame Media3 wrote
+    // has been accepted, so the position is the accepted total. Reporting less keeps
+    // hasPendingData() true, the player never reaches STATE_ENDED, and Media3's stuck-playing
+    // detector raises ERROR_CODE_TIMEOUT ten seconds later (device log 2026-10-22 03:00:55).
+    if (stoppedBySink) return cap
+    return if (isTailDrained(backendPositionUs, submittedFrames, pendingFrames, sampleRate, slackFrames)) {
+        cap
+    } else {
+        minOf(raw, cap)
+    }
 }
+
+/**
+ * Whether the only frames the backend has not reported are counter quantization (see
+ * [POSITION_SATURATION_SLACK_FRAMES]) rather than audio still in flight.
+ */
+internal fun isTailDrained(
+    backendPositionUs: Long,
+    submittedFrames: Long,
+    pendingFrames: Int,
+    sampleRate: Int,
+    slackFrames: Long = POSITION_SATURATION_SLACK_FRAMES,
+): Boolean =
+    pendingFrames == 0 &&
+        submittedFrames > 0L &&
+        usToFrames(backendPositionUs, sampleRate) >= submittedFrames - slackFrames
 
 class BackendAudioOutput(
     private val backend: AudioOutputBackend,
@@ -198,15 +233,19 @@ class BackendAudioOutput(
     private var backendSubmittedFrames = 0L
 
     /**
-     * Frames accepted from Media3 since the last [flush]/[stop] - the adapter's copy of the
-     * `writtenFrames` Media3 compares the reported position against in
-     * `DefaultAudioSink.hasAudioOutputPendingData`. Kept as its own counter (rather than derived
-     * from `backendSubmittedFrames + pendingFrames`) because it is the number the end-of-stream
-     * clamp is defined against.
+     * Frames accepted from Media3 since the last [flush] - the adapter's copy of the `writtenFrames`
+     * Media3 compares the reported position against in `DefaultAudioSink.hasAudioOutputPendingData`.
+     * Kept as its own counter (rather than derived from `backendSubmittedFrames + pendingFrames`)
+     * because it is the number the end-of-stream clamp is defined against.
+     *
+     * Deliberately *not* reset by [stop]: Media3 calls AudioOutput.stop() from
+     * `DefaultAudioSink.playPendingData()`, which is the sink being told the stream is drained
+     * (`playToEndOfStream()` sets handledEndOfStream right after), and `isEnded()` is evaluated
+     * against this total.
      */
     private var acceptedFrames = 0L
 
-    /** Backend position (microseconds) at the last flush/stop; pacing is relative to this base. */
+    /** Backend position (microseconds) at the last flush; pacing is relative to this base. */
     private var positionBaseUs = 0L
 
     /** When the current end-of-stream drain first failed to empty `pending`, or 0 when none. */
@@ -214,6 +253,26 @@ class BackendAudioOutput(
 
     /** Whether the end-of-stream bookkeeping line has been logged since the last flush/stop. */
     private var eosLogged = false
+
+    /**
+     * Set by [stop], which Media3 only calls once the stream is drained. Cleared by [flush] and
+     * [release].
+     */
+    @Volatile
+    private var stoppedBySink = false
+
+    // ---- tail diagnostics: bounded, one line per second at most ----
+
+    @Volatile
+    private var lastAcceptedFrames = 0L
+
+    @Volatile
+    private var lastAcceptedChangeMs = 0L
+
+    @Volatile
+    private var lastSinkLogMs = 0L
+
+    private var stopCallerLogged = false
 
     init {
         val bitDepth = when (outputConfig.encoding) {
@@ -253,7 +312,16 @@ class BackendAudioOutput(
 
     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
         if (released) return false
+        val nowMs = elapsedRealtimeMs()
         val atEndOfStream = presentationTimeUs == C.TIME_END_OF_SOURCE
+        val remainingBefore = buffer.remaining()
+        val accepted = writeInternal(buffer, encodedAccessUnitCount, atEndOfStream)
+        noteAcceptedFrames(nowMs)
+        logTailWrite(nowMs, remainingBefore, accepted, atEndOfStream)
+        return accepted
+    }
+
+    private fun writeInternal(buffer: ByteBuffer, encodedAccessUnitCount: Int, atEndOfStream: Boolean): Boolean {
         if (pendingFrames == 0) eosDrainStartedMs = 0L
         if (!buffer.hasRemaining()) {
             // Reachable on a retry, not on a first call: DefaultAudioSink.handleBuffer returns true
@@ -382,6 +450,84 @@ class BackendAudioOutput(
         )
     }
 
+    // ---- tail diagnostics ----
+
+    /**
+     * Who asked the sink to stop, once per sink.
+     *
+     * Device report 2026-10-22: `sink.stop` appeared exactly at the end of a track and the player
+     * then froze for 10 s. AudioOutput.stop() has exactly one caller in Media3 1.11 -
+     * `DefaultAudioSink.playPendingData()`, itself only reached from `playToEndOfStream()` and from
+     * a mid-stream output reconfiguration - so this stack says which of the two it was. Six frames
+     * is enough to tell `playToEndOfStream` from `handleBuffer`.
+     */
+    private fun logStopCaller() {
+        if (stopCallerLogged) return
+        stopCallerLogged = true
+        val frames = Thread.currentThread().stackTrace
+            .drop(1)
+            .take(6)
+            .joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+        android.util.Log.i(TAG, "sink.stop caller=$frames")
+    }
+
+    /** Records the last time Media3 handed us a frame, and seeds the clock on the first call. */
+    private fun noteAcceptedFrames(nowMs: Long) {
+        if (acceptedFrames != lastAcceptedFrames) {
+            lastAcceptedFrames = acceptedFrames
+            lastAcceptedChangeMs = nowMs
+        } else if (lastAcceptedChangeMs == 0L) {
+            lastAcceptedChangeMs = nowMs
+        }
+    }
+
+    /** Playback wanted, but no frame accepted for [SINK_IDLE_MS]: the pipeline stopped moving. */
+    private fun isSinkIdle(nowMs: Long): Boolean {
+        if (!playWhenReady()) return false
+        val lastChange = lastAcceptedChangeMs
+        return lastChange != 0L && nowMs - lastChange >= SINK_IDLE_MS
+    }
+
+    /**
+     * Per-call write trace, throttled, only once the tail is in play (EOS-tagged buffer or an idle
+     * sink). `remaining` is what Media3 offered, so `remaining>0 with ret=false` means we refused.
+     */
+    private fun logTailWrite(nowMs: Long, remainingBefore: Int, accepted: Boolean, atEndOfStream: Boolean) {
+        if (!atEndOfStream && !isSinkIdle(nowMs)) return
+        if (nowMs - lastSinkLogMs < SINK_LOG_INTERVAL_MS) return
+        lastSinkLogMs = nowMs
+        android.util.Log.i(
+            TAG,
+            "write tail: off=$remainingBefore pend=$pendingFrames acc=$acceptedFrames " +
+                "sub=$backendSubmittedFrames backend=${usToFrames(backend.getPositionUs(), sampleRate)} " +
+                "ret=$accepted eos=$atEndOfStream stopped=$stoppedBySink",
+        )
+    }
+
+    /**
+     * The one line that says which side of the write boundary stopped moving.
+     *
+     * `acc` is what Media3 handed us, `pend` is ours and not yet in the backend, `backend` is the
+     * device's play head, `cap` is the accepted total. A frozen `backend` with `pend>0` is a
+     * transport/device stall; a frozen `acc` with `pend==0` and `backend==cap` is upstream of the
+     * sink (no more PCM arriving), and `stopped` says Media3 already declared the stream drained.
+     */
+    private fun logSinkState(nowMs: Long, returnedUs: Long, tailDrained: Boolean) {
+        val idle = isSinkIdle(nowMs)
+        if (!idle && !tailDrained && !stoppedBySink) return
+        if (nowMs - lastSinkLogMs < SINK_LOG_INTERVAL_MS) return
+        lastSinkLogMs = nowMs
+        val capUs = framesToUs(acceptedFrames, sampleRate) +
+            if (flushedFrames > 0) framesToUs(flushedFrames, sampleRate) else 0L
+        android.util.Log.i(
+            TAG,
+            "sink idle: acc=$acceptedFrames pend=$pendingFrames sub=$backendSubmittedFrames " +
+                "backend=${usToFrames(backend.getPositionUs(), sampleRate)} " +
+                "pos=${usToFrames(returnedUs, sampleRate)} cap=${usToFrames(capUs, sampleRate)} " +
+                "tail=$tailDrained stopped=$stoppedBySink idle=${nowMs - lastAcceptedChangeMs}ms",
+        )
+    }
+
     private fun appendPacked(buffer: ByteBuffer, frames: Int, sourceFrameBytes: Int) {
         val srcBytes = ByteArray(frames * sourceFrameBytes)
         val srcView = buffer.duplicate()
@@ -465,6 +611,7 @@ class BackendAudioOutput(
         // against that count: a counter that survived a seek would report a position past the frames
         // of the new stretch and make the sink look drained before it had played anything.
         acceptedFrames = 0L
+        stoppedBySink = false
         eosDrainStartedMs = 0L
         eosLogged = false
         backend.flush()
@@ -473,18 +620,22 @@ class BackendAudioOutput(
     }
 
     override fun stop() {
-        android.util.Log.i(TAG, "sink.stop")
+        logStopCaller()
 
         if (released) return
-        flushedFrames += pendingFrames
-        pending = ByteArray(0)
-        pendingFrames = 0
-        acceptedFrames = 0L
+        // Media3 calls this from DefaultAudioSink.playPendingData(), which playToEndOfStream()
+        // reaches only after drainToEndOfStream() returned true - the sink is drained, and
+        // handledEndOfStream is set immediately afterwards. The accounting must therefore survive:
+        // isEnded() is `handledEndOfStream && !(writtenFrames > usToFrames(getPositionUs()))`, and
+        // Media3 has *not* zeroed its written-frame count here (flush does that). Zeroing
+        // acceptedFrames in stop() reported a position of ~0 against 10.4M written frames, so the
+        // player never reached STATE_ENDED and the stuck-playing detector raised ERROR_CODE_TIMEOUT
+        // ten seconds later (device log 2026-10-22 03:00:55). A mid-stream stop is always followed
+        // by flush(), which does reset the epoch.
+        stoppedBySink = true
         eosDrainStartedMs = 0L
         eosLogged = false
         backend.stop()
-        backendSubmittedFrames = 0L
-        positionBaseUs = backend.getPositionUs()
         startedOnce = false
     }
 
@@ -497,6 +648,7 @@ class BackendAudioOutput(
         pending = ByteArray(0)
         pendingFrames = 0
         acceptedFrames = 0L
+        stoppedBySink = false
         eosDrainStartedMs = 0L
         backend.release()
         listeners.forEach { it.onReleased() }
@@ -522,14 +674,26 @@ class BackendAudioOutput(
      * `flushedUs` keeps a seek from looking like a jump backwards: those frames were handed to the
      * backend before the flush and are not part of the post-flush accepted count.
      */
-    override fun getPositionUs(): Long = resolvedPositionUs(
-        backendPositionUs = backend.getPositionUs(),
-        flushedUs = if (flushedFrames > 0) framesToUs(flushedFrames, sampleRate) else 0L,
-        acceptedFrames = acceptedFrames,
-        submittedFrames = backendSubmittedFrames,
-        pendingFrames = pendingFrames,
-        sampleRate = sampleRate,
-    )
+    override fun getPositionUs(): Long {
+        val nowMs = elapsedRealtimeMs()
+        noteAcceptedFrames(nowMs)
+        val backendUs = backend.getPositionUs()
+        val positionUs = resolvedPositionUs(
+            backendPositionUs = backendUs,
+            flushedUs = if (flushedFrames > 0) framesToUs(flushedFrames, sampleRate) else 0L,
+            acceptedFrames = acceptedFrames,
+            submittedFrames = backendSubmittedFrames,
+            pendingFrames = pendingFrames,
+            sampleRate = sampleRate,
+            stoppedBySink = stoppedBySink,
+        )
+        logSinkState(
+            nowMs = nowMs,
+            returnedUs = positionUs,
+            tailDrained = isTailDrained(backendUs, backendSubmittedFrames, pendingFrames, sampleRate),
+        )
+        return positionUs
+    }
 
     override fun getPlaybackParameters(): PlaybackParameters = playbackParameters
 
