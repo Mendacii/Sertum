@@ -13,6 +13,12 @@ import org.junit.Test
  *
  * The failure it prevents: with only the track number to sort by, two discs interleave, and
  * an album reads 1, 1, 2, 2, 3, 3 rather than 1..13 then 1..13.
+ *
+ * The second failure it prevents, found on the reference device: one folder spelled two ways
+ * (`/Download/...` and `/download/...` - one directory on a case-insensitive volume) split an
+ * album into two bands, and BINARY ordering played the upper-cased half first, so the album
+ * read 3, 4, 1, 2. [discBandKeyOf] is what a scan writes to the row; [discBandOf] stays the raw
+ * extraction that the earlier cases below describe.
  */
 class DiscBandTest {
 
@@ -98,4 +104,61 @@ class DiscBandTest {
             "/x/BEST/Disc 2",
         ).inOrder()
     }
+
+    @Test
+    fun `the same directory spelled in either case makes one band`() {
+        // Shared storage is case-insensitive: these are one folder, and the platform's `_data`
+        // column can carry either spelling for files inside it.
+        val upper = discBandKeyOf("/storage/emulated/0/Download/Flud/Ave Mujica/03.flac")
+        val lower = discBandKeyOf("/storage/emulated/0/download/Flud/Ave Mujica/01.flac")
+
+        assertThat(upper).isEqualTo(lower)
+        // Folded, so the stored value is canonical rather than whichever spelling won the race.
+        assertThat(upper).isEqualTo("/storage/emulated/0/download/flud/ave mujica")
+    }
+
+    @Test
+    fun `an album stored under two spellings of one folder still plays 1 to 4`() {
+        // The measured case: `Ave Mujica|神の名を|FLAC`, four tracks of one folder, two rows indexed
+        // under `/Download/` and two under `/download/`. The list below is what the scanner now
+        // writes; the order is LibraryDao.tracksForAlbum's - band first, then track number -
+        // with BINARY on the band on purpose, so this passes only because the stored keys are
+        // genuinely equal rather than because the comparison folds them.
+        val stored = listOf(
+            Row(discBandKeyOf("/storage/emulated/0/Download/Flud/Ave Mujica/03.flac"), 3),
+            Row(discBandKeyOf("/storage/emulated/0/download/Flud/Ave Mujica/01.flac"), 1),
+            Row(discBandKeyOf("/storage/emulated/0/Download/Flud/Ave Mujica/04.flac"), 4),
+            Row(discBandKeyOf("/storage/emulated/0/download/Flud/Ave Mujica/02.flac"), 2),
+        )
+
+        val played = stored.sortedWith(compareBy({ it.discBand }, { it.trackNumber }))
+
+        assertThat(played.map { it.trackNumber }).containsExactly(1, 2, 3, 4).inOrder()
+    }
+
+    @Test
+    fun `folding the band keeps the discs in order`() {
+        // The multi-disc case still has to work through the value actually written, not only
+        // through the raw extraction the cases above use.
+        val discOne = discBandKeyOf("/x/DENKARE THE BEST/Disc 1/01 A.flac")
+        val discTwo = discBandKeyOf("/x/denkare the best/Disc 2/01 B.flac")
+
+        assertThat(discOne).isEqualTo("/x/denkare the best/disc 1")
+        assertThat(discOne < discTwo).isTrue()
+        // The disc prefix a one-folder release carries in its file name survives the folding.
+        // The prefix is the regex's own match, "1." - what follows it is the first track number.
+        assertThat(discBandKeyOf("/music/Wink - Selection/1.01. Especially for You.flac"))
+            .isEqualTo("/music/wink - selection/1.")
+    }
+
+    @Test
+    fun `a SAF document id keeps its case`() {
+        // Not a filesystem path: some document providers are case-sensitive, so two ids that
+        // differ only by case are two different documents and must not be merged into one band.
+        assertThat(discBandKeyOf("content://p/tree/Root/document/Root/Album/01.flac"))
+            .isEqualTo("content://p/tree/Root/document/Root/Album")
+    }
+
+    /** One stored row, as far as album ordering is concerned. */
+    private data class Row(val discBand: String, val trackNumber: Int)
 }

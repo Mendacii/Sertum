@@ -478,7 +478,9 @@ class LibraryScanner(
                 albumKey = albumKey.key,
                 discNumber = null,
                 trackNumber = trackNumber,
-                discBand = discBandOf(candidate.path),
+                // The comparison form, not the raw directory: shared storage can spell one folder
+                // two ways, and the column is only ever compared. See [discBandKeyOf].
+                discBand = discBandKeyOf(candidate.path),
                 // Both null: an ordinary track is the whole file. Only a track carved out of a
                 // single-file disc rip carries a span, and those are built after parsing.
                 startMs = null,
@@ -623,6 +625,34 @@ internal fun discBandOf(path: String): String {
     val fileName = path.substringAfterLast('/')
     val discPrefix = DISC_DOT_TRACK_PREFIX.find(fileName)?.value ?: return directory
     return "$directory/$discPrefix"
+}
+
+/**
+ * The comparison form of [discBandOf] - the value written to `tracks.discBand`.
+ *
+ * Shared storage on Android is case-insensitive but case-preserving. `/storage/emulated/0/Download`
+ * and `/storage/emulated/0/download` are one directory, and neither spelling is wrong: the
+ * platform's `_data` column keeps whatever the app that indexed the file declared, so two tracks of
+ * one album can be stored under both. That alone split an album into two "discs", because play
+ * order is keyed on this value first - under SQLite's default BINARY comparison 'D' (0x44) sorts
+ * before 'd' (0x64), so the upper-cased half played first.
+ *
+ * Folding the case costs nothing: the band is a sort key, never a path this app opens (a track is
+ * opened by its `uri`), so no information anything uses is removed. `lowercase()` is the
+ * locale-invariant one, deliberately - `lowercase(Locale.getDefault())` maps 'I' to 'ı' in Turkish,
+ * which would make the band depend on the device's language.
+ *
+ * Only absolute filesystem paths are folded. A SAF-sourced band is a `content://` document id, and
+ * some document providers are case-sensitive: two ids differing only by case are two different
+ * documents there, and folding them would interleave two discs.
+ *
+ * `LibraryDao.tracksForAlbum` also compares the column with `COLLATE NOCASE`. Two separate
+ * mutations on purpose: this one keeps new rows canonical, that one repairs rows written before it
+ * existed, with no rescan needed.
+ */
+internal fun discBandKeyOf(path: String): String {
+    val band = discBandOf(path)
+    return if (band.startsWith('/')) band.lowercase() else band
 }
 
 /**

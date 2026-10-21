@@ -14,6 +14,23 @@ interface LibraryDao {
     @Query("SELECT * FROM tracks ORDER BY title COLLATE NOCASE")
     fun observeTracks(): Flow<List<TrackEntity>>
 
+    /**
+     * Tracks of one album, in play order.
+     *
+     * `discBand` is compared with `COLLATE NOCASE`, and that is the fix for an ordering bug rather
+     * than a detail. The band is a directory path, and shared storage is case-insensitive but
+     * case-preserving, so one folder can reach this table under both spellings: the platform's
+     * `_data` column keeps whichever one the app that indexed the file declared, and
+     * [com.sertum.player.data.scan.MediaStoreSource] takes it verbatim. SQLite's default BINARY
+     * collation then puts 'D' (0x44) before 'd' (0x64), so the album splits into two bands and the
+     * upper-cased one plays first - measured as 3, 4, 1, 2 on `Ave Mujica|神の名を|FLAC`, whose
+     * files sit under both `/Download/...` and `/download/...`. NOCASE folds the ASCII case, the
+     * two spellings become one band, and the track number orders inside it.
+     *
+     * The scanner folds the same case when it writes the column (`discBandKeyOf`), so new rows are
+     * canonical. This clause is what repairs the rows a previous scan already stored, without
+     * requiring a rescan.
+     */
     @Query(
         "SELECT * FROM tracks WHERE albumKey = :albumKey " +
             // discBand first: a multi-disc release numbers each disc from one, so ordering on
@@ -21,7 +38,10 @@ interface LibraryDao {
             // already runs disc 1 first, so the discs come out in order without a disc number
             // having to be read - the platform exposes no disc tag. It is constant within a
             // single-disc album, so the track number remains the effective first key there.
-            "ORDER BY COALESCE(discBand, '') ASC, " +
+            //
+            // NOCASE on the band: the directory's spelling is not stable in the platform's index
+            // (see the KDoc above), and a case difference is not a disc difference.
+            "ORDER BY COALESCE(discBand, '') COLLATE NOCASE ASC, " +
             "COALESCE(discNumber, 999) ASC, COALESCE(trackNumber, 999) ASC, title COLLATE NOCASE ASC",
     )
     fun tracksForAlbum(albumKey: String): Flow<List<TrackEntity>>
