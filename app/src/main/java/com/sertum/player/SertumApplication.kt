@@ -189,7 +189,9 @@ class SertumApplication : Application() {
         )
     }
 
-    val playerEngine: PlayerEngine by lazy { PlayerEngine(this) }
+    // The diagnostics store is shared: the debug PCM tap writes its per-second `pcm` lines into the
+    // same rolling file as the transport and route logs, so one export contains the whole chain.
+    val playerEngine: PlayerEngine by lazy { PlayerEngine(this, diagnosticsStore) }
 
     val playbackController: PlaybackCoordinator by lazy {
         PlaybackCoordinator(

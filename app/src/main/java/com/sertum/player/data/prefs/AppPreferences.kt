@@ -6,6 +6,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * The complete fingerprint under which a UAC2 volume was observed. A restore is only allowed when
+ * the current device/unit reports the same scale and unit.
+ */
+data class Uac2VolumeHistory(
+    val raw: Int,
+    val minRaw: Int,
+    val maxRaw: Int,
+    val resolutionRaw: Int?,
+    val unitId: Int,
+)
+
+/**
  * App preferences that must outlive the process.
  *
  * [com.sertum.player.ui.settings.SettingsStateHolder] stays the in-memory
@@ -40,6 +52,10 @@ class AppPreferences(context: Context) {
 
     private val _autoExclusive = MutableStateFlow(
         prefs.getBoolean(KEY_AUTO_EXCLUSIVE, DEFAULT_AUTO_EXCLUSIVE),
+    )
+
+    private val _softwareVolumeEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_SOFTWARE_VOLUME_ENABLED, DEFAULT_SOFTWARE_VOLUME_ENABLED),
     )
 
     private val _roundCover = MutableStateFlow(
@@ -108,6 +124,19 @@ class AppPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_AUTO_EXCLUSIVE, enabled).apply()
     }
 
+    /**
+     * Whether UAC2 software volume attenuation is allowed. Off by default: the exclusive path's
+     * whole point is unmodified PCM, so the bit-perfect route is the default and the fallback is
+     * an explicit choice.
+     */
+    val softwareVolumeEnabled: StateFlow<Boolean> = _softwareVolumeEnabled.asStateFlow()
+
+    fun setSoftwareVolumeEnabled(enabled: Boolean) {
+        if (_softwareVolumeEnabled.value == enabled) return
+        _softwareVolumeEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_SOFTWARE_VOLUME_ENABLED, enabled).apply()
+    }
+
     val roundCover: StateFlow<Boolean> = _roundCover.asStateFlow()
 
     fun setRoundCover(round: Boolean) {
@@ -125,7 +154,58 @@ class AppPreferences(context: Context) {
         prefs.edit().putString(KEY_LANGUAGE, tag).apply()
     }
 
+    /**
+     * Last raw hardware volume observed on a USB DAC, plus the range/unit it was observed under.
+     *
+     * A raw value alone is not enough: the same vendorId/productId can be a different firmware or
+     * even a different sample-rate range, and reusing a number learned under another scale is how
+     * a safe value becomes a loud one. The caller must compare the whole fingerprint before restore.
+     */
+    fun uac2VolumeHistory(vendorId: Int, productId: Int): Uac2VolumeHistory? {
+        val prefix = uac2VolumeKey(vendorId, productId)
+        if (!prefs.contains("${prefix}_raw")) return null
+        val resolution = prefs.getInt("${prefix}_res", NO_RESOLUTION)
+        return Uac2VolumeHistory(
+            raw = prefs.getInt("${prefix}_raw", 0),
+            minRaw = prefs.getInt("${prefix}_min", 0),
+            maxRaw = prefs.getInt("${prefix}_max", 0),
+            resolutionRaw = resolution.takeUnless { it == NO_RESOLUTION },
+            unitId = prefs.getInt("${prefix}_unit", -1),
+        )
+    }
+
+    fun setUac2VolumeHistory(
+        vendorId: Int,
+        productId: Int,
+        history: Uac2VolumeHistory,
+    ) {
+        val prefix = uac2VolumeKey(vendorId, productId)
+        prefs.edit()
+            .putInt("${prefix}_raw", history.raw)
+            .putInt("${prefix}_min", history.minRaw)
+            .putInt("${prefix}_max", history.maxRaw)
+            .putInt("${prefix}_res", history.resolutionRaw ?: NO_RESOLUTION)
+            .putInt("${prefix}_unit", history.unitId)
+            .apply()
+    }
+
+    private fun uac2VolumeKey(vendorId: Int, productId: Int): String =
+        "uac2_volume_${vendorId}_${productId}"
+
     companion object {
+        /**
+         * The process's preference store, for audio code that has no Activity/Application handle
+         * but must persist a value learned from the USB device.
+         *
+         * This is set in [init] and only ever holds the application-scoped store; null means the
+         * Application has not reached `SertumApplication.onCreate` yet, in which case the volume
+         * path degrades to "no history" rather than touching the DAC.
+         */
+        @Volatile
+        private var sharedInstance: AppPreferences? = null
+
+        internal fun current(): AppPreferences? = sharedInstance
+
         const val DEFAULT_SCAN_ON_STARTUP = true
 
         /** Off unless asked for: reading beside the music needs the all-files grant. */
@@ -136,6 +216,9 @@ class AppPreferences(context: Context) {
 
         /** Plugging the DAC in selects the exclusive route unless the reader turns this off. */
         const val DEFAULT_AUTO_EXCLUSIVE = true
+
+        /** Off = bit-perfect; software attenuation must be chosen explicitly. */
+        const val DEFAULT_SOFTWARE_VOLUME_ENABLED = false
 
         /** Square covers are the default; the round shape is a choice. */
         const val DEFAULT_ROUND_COVER = false
@@ -148,13 +231,18 @@ class AppPreferences(context: Context) {
         internal const val KEY_DARK_THEME = "dark_theme"
         internal const val KEY_ROUND_COVER = "round_cover"
         internal const val KEY_AUTO_EXCLUSIVE = "auto_exclusive_on_usb"
+        internal const val KEY_SOFTWARE_VOLUME_ENABLED = "software_volume_enabled"
         internal const val KEY_LANGUAGE = "language"
+
+        /** Sentinel for "GET_RES was unavailable"; resolution 0 is a valid value. */
+        private const val NO_RESOLUTION = Int.MIN_VALUE
 
         /** Retired key, cleared on first access so it cannot linger on disk. */
         internal const val KEY_OUTPUT_MODE_RETIRED = "output_mode"
     }
 
     init {
+        sharedInstance = this
         // The persisted output mode was removed; drop any value a previous
         // build may have written so a stale preference cannot confuse a later
         // implementation that does restore it properly.

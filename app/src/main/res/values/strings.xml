@@ -90,6 +90,8 @@
     <string name="settings_output_mode">Output mode</string>
     <string name="settings_output_usb_exclusive">USB exclusive</string>
     <string name="settings_auto_exclusive">Auto exclusive</string>
+    <string name="settings_software_volume_short">Software volume</string>
+    <string name="settings_hardware_volume_unavailable">This DAC does not provide hardware volume control. In USB exclusive mode, adjust the volume on the DAC itself.</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_system">Follow system</string>
     <string name="settings_language_zh">中文</string>
@@ -115,7 +117,9 @@
     <string name="settings_info_output_auto">Standard</string>
     <string name="settings_info_output_auto_desc">Uses the system audio path. Routes to a USB DAC automatically when one is present, with volume controlled by the system.</string>
     <string name="settings_info_output_usb">USB exclusive</string>
-    <string name="settings_info_output_usb_desc">Bypasses the system mixer and sends the file at its original sample rate to the USB DAC for bit-perfect output. Requires a DAC that supports exclusive mode, with media volume at 100%.</string>
+    <string name="settings_info_output_usb_desc">Bypasses the system mixer and sends the file at its original sample rate to the USB DAC. For bit-perfect output, leave software volume off; the system music volume is used only when the fallback is enabled.</string>
+    <string name="settings_info_software_volume">Software volume</string>
+    <string name="settings_info_software_volume_desc">Applies the phone\'s music volume in software before the DAC. This changes the samples and is not bit-perfect, so it is off by default. It is useful only on DACs that do not expose hardware volume control.</string>
     <string name="settings_info_language_system">Follow system</string>
     <string name="settings_info_language_system_desc">Uses the phone language, so the interface follows when the system is switched to Chinese.</string>
     <string name="settings_info_language_zh">Chinese</string>

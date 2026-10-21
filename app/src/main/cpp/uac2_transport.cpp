@@ -71,6 +71,17 @@
  * path that frees any of those joins it first. That is also why `nativeClose` may hold `io` across
  * the join without risking a lock cycle.
  *
+ * ## Evidence for "healthy counters, broken audio"
+ *
+ * `failed == 0`, `underruns == 0` and a plausible feedback sample only prove that the pump ran and
+ * the ring had data. They cannot tell a wrong clock estimate from packets the host controller
+ * silently discards, so this file also logs, rate limited: feedback changes (old/new rate plus the
+ * raw 16.16 bytes that caused it), feedback URBs that complete malformed, feedback values rejected
+ * by the sanity window, the teardown completion histogram (-EXDEV is a cancellation, -EOVERFLOW is
+ * a packet that did not fit its interval), the packet-size clamp backstop, and the ring state at
+ * start. The per-packet path stays silent on purpose: logging it would change the timing the log is
+ * meant to measure.
+ *
  * The alt setting is switched by the caller through Java setInterface: only that path allocates
  * isochronous bandwidth in the xHCI scheduler.
  */
@@ -96,6 +107,16 @@ constexpr int kPacketsPerUrb = 8;
 constexpr int kMicroframesPerSecond = 8000;
 /** Nice value for the pump thread; -8 is aggressive without needing CAP_SYS_NICE. */
 constexpr int kPumpPriority = -8;
+
+/**
+ * How long teardown waits for cancelled URBs to come back, in 1 ms slices.
+ *
+ * USBDEVFS_DISCARDURB only queues the unlink; the completion arrives later, on the host
+ * controller's completion interrupt. Each slice below is one sleep after an empty REAPURBNDELAY, so
+ * the worst case is 200 ms and the normal case is the first one or two slices. Freeing a URB the
+ * kernel still owns is the failure this budget exists to avoid.
+ */
+constexpr int kTeardownReapAttempts = 200;
 
 /**
  * Fixed-size byte queue.
@@ -168,6 +189,31 @@ struct UrbSlot {
     }
 };
 
+/**
+ * Caps one repeated log line at five per second.
+ *
+ * The feedback endpoint reports every millisecond, and a broken one can complete malformed every
+ * microframe. Logging each event would both flood logcat and perturb the timing being measured;
+ * five a second keeps the shape of a change visible without hiding it. Only the pump thread touches
+ * these, so no lock is needed.
+ */
+struct LogLimiter {
+    static constexpr int kPerSecond = 5;
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+    int inWindow = 0;
+
+    bool allow() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window >= std::chrono::seconds(1)) {
+            window = now;
+            inWindow = 0;
+        }
+        if (inWindow >= kPerSecond) return false;
+        ++inWindow;
+        return true;
+    }
+};
+
 struct IsoStream {
     /**
      * Serialises the JNI entry points against each other and against nativeClose.
@@ -210,7 +256,21 @@ struct IsoStream {
     std::atomic<long long> feedbackSeen{0};
     std::atomic<int> feedbackPpm{0};
 
+    /** Byte count of a nominal packet: ceil(rate / 8000) frames, kept for the logs and comparison. */
+    uint32_t nominalPacketBytes = 0;
+    /** Largest packet the URB buffer can hold: maxFramesPerPacket * frameBytes. */
     uint32_t maxPacketBytes = 0;
+    /**
+     * Frames a packet may carry: ceil(rate / 8000) plus one.
+     *
+     * The extra frame is not padding. A DAC whose clock runs slightly fast legitimately asks for it:
+     * 96 kHz reports 12.0 frames per microframe, a +100 ppm crystal reports 12.0012, and the phase
+     * accumulator then rounds up to 13. Sizing the URB for the nominal 12 dropped that packet (and,
+     * with it, one URB of pipeline) while every health counter still claimed success.
+     */
+    int maxFramesPerPacket = 0;
+    /** Bytes per URB (maxPacketBytes * kPacketsPerUrb), sized for the largest allowed packet. */
+    size_t bytesPerUrb = 0;
 
     std::atomic<long long> submitted{0};
     std::atomic<long long> completed{0};
@@ -249,6 +309,44 @@ struct IsoStream {
     std::atomic<int> lastError{0};
 
     /**
+     * Data-URB completion-status histogram, printed by teardown.
+     *
+     * `completed`/`failed` collapse every non-zero URB status into one number, which cannot tell a
+     * cancelled transfer (-EXDEV, expected on stop) from a bandwidth overrun (-EOVERFLOW, the host
+     * controller saying a packet did not fit its microframe). The noise report needs that
+     * distinction. Packet-level errors are counted apart because a URB can have `status == 0` while
+     * individual packets inside it failed. Feedback URBs are excluded: their completions have their
+     * own abnormal log and counters, and mixing them in would bury the data path under the feedback
+     * endpoint's microframe-rate completions.
+     */
+    std::atomic<long long> urbOk{0};
+    std::atomic<long long> urbExdev{0};
+    std::atomic<long long> urbOverflow{0};
+    std::atomic<long long> urbOther{0};
+    std::atomic<long long> urbPacketErrors{0};
+    /** Feedback URBs whose payload was not the expected 4 bytes or whose statuses were non-zero. */
+    std::atomic<long long> feedbackAbnormal{0};
+    /** Well-formed feedback values the sanity window rejected (no clock change applied). */
+    std::atomic<long long> feedbackRejected{0};
+    /** Packets reduced to the hard cap; only reachable with arithmetic outside the accepted window. */
+    std::atomic<long long> clampedPackets{0};
+    /**
+     * Submits the pump made that failed. Nothing else counts them: the re-arm path ignores
+     * submitSlot()'s return value, so a pipeline that keeps silently losing URBs still reports
+     * `failed == 0` and `underruns == 0`.
+     */
+    std::atomic<long long> submitFailures{0};
+    /** Feedback URBs that could not be re-armed; the clock estimate freezes when this grows. */
+    std::atomic<long long> feedbackSubmitFailures{0};
+    /** Microframes produced since open; the timestamp for the feedback logs. */
+    std::atomic<long long> microframeCount{0};
+
+    /** Rate limiters for the event logs a broken device could otherwise flood. */
+    LogLimiter feedbackChangeLog;
+    LogLimiter feedbackAbnormalLog;
+    LogLimiter feedbackRejectLog;
+
+    /**
      * Safety net for a stream that never reached nativeClose: the failure paths inside nativeOpen,
      * and any future caller that drops a handle without closing it. Out of line because it uses the
      * teardown/release helpers defined below.
@@ -282,6 +380,22 @@ std::shared_ptr<IsoStream> findStream(jlong handle) {
     return it == g_streams.end() ? nullptr : it->second;
 }
 
+/** Files one reaped URB into the teardown histogram. */
+void recordUrbStatus(IsoStream *stream, int status) {
+    // usbfs reports completion as a negative errno. -EXDEV is a cancelled URB, which every stop
+    // produces; -EOVERFLOW is the host controller saying the packet did not fit the interval, the
+    // signature of packet sizing that disagrees with the device.
+    if (status == 0) {
+        stream->urbOk.fetch_add(1, std::memory_order_relaxed);
+    } else if (status == -EXDEV) {
+        stream->urbExdev.fetch_add(1, std::memory_order_relaxed);
+    } else if (status == -EOVERFLOW) {
+        stream->urbOverflow.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        stream->urbOther.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 /** Errors that mean the device is gone rather than this call being wrong. */
 bool isFatalErrno(int code) {
     return code == ENODEV || code == ESHUTDOWN || code == EPROTO || code == ENXIO;
@@ -290,6 +404,10 @@ bool isFatalErrno(int code) {
 int nextMicroframeFrames(IsoStream *stream) {
     // Frames accumulate in the double domain so a feedback-corrected rate can be fractional; the
     // carry is carried over, which keeps the long-term average exact.
+    //
+    // Also the clock for the forensic logs: every call is one microframe of audio produced, whether
+    // the packet built from it reaches the device or not.
+    stream->microframeCount.fetch_add(1, std::memory_order_relaxed);
     const double rate = stream->effectiveRate > 0.0
         ? stream->effectiveRate
         : static_cast<double>(stream->sampleRate);
@@ -345,11 +463,30 @@ void fillPacket(IsoStream *stream, uint8_t *destination, size_t bytes) {
 bool submitSlot(IsoStream *stream, UrbSlot &slot) {
     size_t offset = 0;
     for (int i = 0; i < kPacketsPerUrb; ++i) {
-        const int frames = nextMicroframeFrames(stream);
+        int frames = nextMicroframeFrames(stream);
+        // The buffer allows ceil(rate / 8000) + 1 frames per packet, so following the device's
+        // feedback clock does not run into the end of the URB: a fast DAC legitimately asks for the
+        // extra frame, and clamping it would make the transport send fewer frames than the DAC
+        // consumes - its ring would grow until writes were rejected or the position drifted. The
+        // check below is only the hard backstop for arithmetic outside the accepted feedback window
+        // (the sanity window bounds a value below nominal * 1.1): the extra frames then stay in the
+        // ring rather than being written past the buffer, and the clamped counter records it.
+        if (frames > stream->maxFramesPerPacket) {
+            if (stream->clampedPackets.fetch_add(1) == 0) {
+                LOGW("packet clamp backstop: requested %d frames > max %d (frameBytes=%d "
+                     "maxPacket=%u microframes=%lld)",
+                     frames, stream->maxFramesPerPacket, stream->frameBytes,
+                     stream->maxPacketBytes, stream->microframeCount.load());
+            }
+            frames = stream->maxFramesPerPacket;
+        }
         const int packetBytes = frames * stream->frameBytes;
         if (packetBytes < 0 || offset + static_cast<size_t>(packetBytes) > slot.capacity) {
+            // Unreachable after the clamp; kept as the hard backstop in case maxPacketBytes and the
+            // per-packet budget ever diverge.
             LOGE("packet exceeds buffer: packet=%d offset=%zu capacity=%zu",
                  packetBytes, offset, slot.capacity);
+            stream->submitFailures.fetch_add(1);
             return false;
         }
         slot.urb->iso_frame_desc[i].length = static_cast<unsigned int>(packetBytes);
@@ -375,6 +512,7 @@ bool submitSlot(IsoStream *stream, UrbSlot &slot) {
         const int code = errno;
         stream->lastError.store(code);
         if (isFatalErrno(code)) stream->dead.store(true);
+        stream->submitFailures.fetch_add(1);
         LOGE("submiturb failed: errno=%d %s", code, strerror(code));
         return false;
     }
@@ -399,6 +537,7 @@ bool submitFeedbackSlot(IsoStream *stream, UrbSlot &slot) {
     slot.urb->iso_frame_desc[0].status = 0;
     if (ioctl(stream->fd, USBDEVFS_SUBMITURB, slot.urb) < 0) {
         stream->lastError.store(errno);
+        stream->feedbackSubmitFailures.fetch_add(1);
         return false;
     }
     slot.inFlight.store(true);
@@ -409,10 +548,23 @@ bool submitFeedbackSlot(IsoStream *stream, UrbSlot &slot) {
 void consumeFeedback(IsoStream *stream, UrbSlot &slot) {
     const int status = slot.urb->iso_frame_desc[0].status;
     const unsigned int actual = slot.urb->iso_frame_desc[0].actual_length;
+    const int urbStatus = slot.urb->status;
     const long long seen = stream->feedbackSeen.load();
-    if (seen < 8) {
+    if (status != 0 || actual != 4 || urbStatus != 0) {
+        // A stalled or short feedback IN used to be invisible after the first eight accepted
+        // samples: the value was simply not applied and no counter moved, so the transport looked
+        // healthy while its clock estimate was frozen. Log it (rate limited) and count it.
+        const long long total = stream->feedbackAbnormal.fetch_add(1) + 1;
+        if (stream->feedbackAbnormalLog.allow()) {
+            LOGW("feedback URB abnormal: packetStatus=%d urbStatus=%d actual=%u total=%lld "
+                 "bytes=%02X %02X %02X %02X microframes=%lld",
+                 status, urbStatus, actual, total,
+                 slot.pcm[0], slot.pcm[1], slot.pcm[2], slot.pcm[3],
+                 stream->microframeCount.load());
+        }
+    } else if (seen < 8) {
         LOGI("feedback: status=%d actual=%u urbStatus=%d bytes=%02X %02X %02X %02X",
-             status, actual, slot.urb->status,
+             status, actual, urbStatus,
              slot.pcm[0], slot.pcm[1], slot.pcm[2], slot.pcm[3]);
     }
     if (status == 0 && actual >= 4) {
@@ -422,9 +574,32 @@ void consumeFeedback(IsoStream *stream, UrbSlot &slot) {
         const double nominal = static_cast<double>(stream->sampleRate) / kMicroframesPerSecond;
         // Reject values that are not a clock at all (a stalled endpoint can return zeros).
         if (nominal > 0.0 && frames > nominal * 0.9 && frames < nominal * 1.1) {
-            stream->effectiveRate = frames * kMicroframesPerSecond;
+            const double newRate = frames * kMicroframesPerSecond;
+            if (newRate != stream->effectiveRate && stream->feedbackChangeLog.allow()) {
+                // The raw bytes belong in this line: the feedback convention (ratio versus absolute
+                // count) is decided from them, and a change log without them cannot be audited.
+                LOGI("feedback change: framesPerUframe %.6f -> %.6f rate %.3f -> %.3f "
+                     "raw=%02X %02X %02X %02X microframes=%lld",
+                     stream->effectiveRate / kMicroframesPerSecond, frames,
+                     stream->effectiveRate, newRate,
+                     slot.pcm[0], slot.pcm[1], slot.pcm[2], slot.pcm[3],
+                     stream->microframeCount.load());
+            }
+            stream->effectiveRate = newRate;
             stream->feedbackPpm.store(feedbackPpmFromRaw(raw, stream->sampleRate));
             stream->feedbackSeen.fetch_add(1);
+        } else {
+            // Well-formed but outside the sanity window: the old code dropped it silently, which is
+            // exactly how a frozen or garbage clock reads as "healthy" - effectiveRate keeps its
+            // last good value while no packet follows the device any more. Counted and rate limited;
+            // the acceptance policy itself is unchanged.
+            const long long total = stream->feedbackRejected.fetch_add(1) + 1;
+            if (stream->feedbackRejectLog.allow()) {
+                LOGW("feedback rejected: framesPerUframe=%.6f nominal=%.6f raw=%02X %02X %02X %02X "
+                     "total=%lld microframes=%lld",
+                     frames, nominal, slot.pcm[0], slot.pcm[1], slot.pcm[2], slot.pcm[3],
+                     total, stream->microframeCount.load());
+            }
         }
     }
     slot.inFlight.store(false);
@@ -447,10 +622,14 @@ void pumpLoop(IsoStream *stream) {
             if (now - lastHeartbeat >= std::chrono::seconds(5)) {
                 lastHeartbeat = now;
                 LOGI("heartbeat submitted=%lld completed=%lld frames=%lld underruns=%lld "
-                     "dead=%d maxGap=%lld",
+                     "dead=%d maxGap=%lld clamped=%lld submitFail=%lld feedbackAbnormal=%lld "
+                     "feedbackRejected=%lld feedbackSubmitFail=%lld",
                      stream->submitted.load(), stream->completed.load(),
                      stream->framesSent.load(), stream->underruns.load(),
-                     stream->dead.load() ? 1 : 0, stream->maxGapUs.load());
+                     stream->dead.load() ? 1 : 0, stream->maxGapUs.load(),
+                     stream->clampedPackets.load(), stream->submitFailures.load(),
+                     stream->feedbackAbnormal.load(), stream->feedbackRejected.load(),
+                     stream->feedbackSubmitFailures.load());
             }
         }
         usbdevfs_urb *done = nullptr;
@@ -476,6 +655,8 @@ void pumpLoop(IsoStream *stream) {
                 if (slot.urb == done) feedbackDone = true;
             }
             if (!feedbackDone) {
+                recordUrbStatus(stream, done->status);
+                stream->urbPacketErrors.fetch_add(packetErrors);
                 if (done->status != 0 || packetErrors > 0) {
                     stream->failed.fetch_add(1);
                 } else {
@@ -516,20 +697,80 @@ void pumpLoop(IsoStream *stream) {
 void teardown(IsoStream *stream) {
     stream->running.store(false);
     if (stream->pump.joinable()) stream->pump.join();
+
+    // Cancel whatever is still queued, and count it: each cancelled URB owes one completion.
+    int pending = 0;
     for (auto &slot : stream->slots) {
         if (slot.inFlight.exchange(false)) {
             ioctl(stream->fd, USBDEVFS_DISCARDURB, slot.urb);
+            ++pending;
         }
     }
     for (auto &slot : stream->feedbackSlots) {
         if (slot.inFlight.exchange(false)) {
             ioctl(stream->fd, USBDEVFS_DISCARDURB, slot.urb);
+            ++pending;
         }
     }
-    for (int i = 0; i < kUrbsInFlight * 4; ++i) {
+
+    // USBDEVFS_DISCARDURB only queues the unlink; the completion comes back on a later completion
+    // interrupt. The previous loop broke on the first EAGAIN - which is exactly what the kernel
+    // answers before that interrupt lands - so on the usual path it reaped nothing and left every
+    // cancelled URB owned by the kernel while releaseResources freed its memory. Keep reaping, in
+    // bounded 1 ms slices, until every cancelled URB has come back; a healthy device needs one or
+    // two slices. If the budget runs out, say so: the warning is the only trace of a URB that
+    // outlived its buffer.
+    int attempts = 0;
+    while (pending > 0 && attempts < kTeardownReapAttempts) {
         usbdevfs_urb *done = nullptr;
-        if (ioctl(stream->fd, USBDEVFS_REAPURBNDELAY, &done) < 0) break;
+        const int rc = ioctl(stream->fd, USBDEVFS_REAPURBNDELAY, &done);
+        if (rc == 0 && done != nullptr) {
+            // Only data URBs feed the histogram; feedback completions have their own log above.
+            bool isFeedback = false;
+            for (auto &slot : stream->feedbackSlots) {
+                if (slot.urb == done) {
+                    isFeedback = true;
+                    break;
+                }
+            }
+            if (!isFeedback) recordUrbStatus(stream, done->status);
+            --pending;
+            continue;
+        }
+        if (rc < 0 && errno != EAGAIN && errno != EINTR) {
+            // EBADF/ENODEV: the descriptor or device is gone, so no completion can be delivered.
+            LOGW("teardown: reap stopped early: errno=%d %s pending=%d",
+                 errno, strerror(errno), pending);
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ++attempts;
     }
+    if (pending > 0) {
+        LOGW("teardown: %d URB(s) still owned by the kernel after %d ms",
+             pending, attempts);
+    }
+
+    // The evidence lines: the first separates cancellations from overruns and counts the silent
+    // failure paths `failed`/`underruns` cannot see; the second pins the parameters packets were
+    // sized from, so a stream that reported `failed == 0` can still be explained after the fact.
+    size_t ringLeft = 0;
+    {
+        std::lock_guard<std::mutex> ringLock(stream->ringMutex);
+        ringLeft = stream->ring.count;
+    }
+    LOGI("teardown: urbs ok=%lld exdev=%lld overflow=%lld other=%lld packetErr=%lld "
+         "submitFail=%lld clamped=%lld feedbackAbnormal=%lld feedbackRejected=%lld "
+         "feedbackSubmitFail=%lld reapLeft=%d submitted=%lld",
+         stream->urbOk.load(), stream->urbExdev.load(), stream->urbOverflow.load(),
+         stream->urbOther.load(), stream->urbPacketErrors.load(), stream->submitFailures.load(),
+         stream->clampedPackets.load(), stream->feedbackAbnormal.load(),
+         stream->feedbackRejected.load(), stream->feedbackSubmitFailures.load(), pending,
+         stream->submitted.load());
+    LOGI("teardown: params nominalPacket=%u maxPacket=%u urbBytes=%zu framesPerUframe=%.6f "
+         "effectiveRate=%.3f ringLeft=%zu",
+         stream->nominalPacketBytes, stream->maxPacketBytes, stream->bytesPerUrb,
+         stream->effectiveRate / kMicroframesPerSecond, stream->effectiveRate, ringLeft);
 }
 
 /**
@@ -537,8 +778,9 @@ void teardown(IsoStream *stream) {
  *
  * Caller holds stream->io (or owns the stream exclusively, as the destructor does). Idempotent:
  * every pointer is nulled and the fd reset, so nativeClose followed by the destructor cannot free
- * the same allocation twice. The kernel can still own a URB that the best-effort discard above did
- * not reap; that is pre-existing behaviour and is unchanged here.
+ * the same allocation twice. teardown before this point waits, bounded, for every cancelled URB to
+ * come back and logs the ones that did not (`reapLeft`); those are the only URBs the kernel could
+ * still reference when this frees their memory.
  */
 void releaseResources(IsoStream *stream) {
     for (auto &slot : stream->slots) {
@@ -600,9 +842,15 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
     stream->feedbackEndpoint = feedbackEndpoint;
     stream->effectiveRate = static_cast<double>(sampleRate);
 
-    const int maxFrames = (sampleRate + kMicroframesPerSecond - 1) / kMicroframesPerSecond;
-    stream->maxPacketBytes = static_cast<uint32_t>(maxFrames * stream->frameBytes);
-    const size_t bytesPerUrb = static_cast<size_t>(stream->maxPacketBytes) * kPacketsPerUrb;
+    // One frame of headroom over the nominal ceil(), so the packets that follow the feedback clock
+    // always fit: see maxFramesPerPacket. This is the budget the URB buffers are allocated from.
+    const int nominalFrames = (sampleRate + kMicroframesPerSecond - 1) / kMicroframesPerSecond;
+    stream->maxFramesPerPacket = nominalFrames + 1;
+    stream->nominalPacketBytes = static_cast<uint32_t>(nominalFrames * stream->frameBytes);
+    stream->maxPacketBytes =
+        static_cast<uint32_t>(stream->maxFramesPerPacket * stream->frameBytes);
+    stream->bytesPerUrb = static_cast<size_t>(stream->maxPacketBytes) * kPacketsPerUrb;
+    const size_t bytesPerUrb = stream->bytesPerUrb;
 
     stream->slots.resize(kUrbsInFlight);
     for (auto &slot : stream->slots) {
@@ -644,9 +892,10 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeOpen(
         g_streams[handle] = stream;
     }
     LOGI("open handle=%lld fd=%d ep=0x%02X feedback=0x%02X rate=%d ch=%d subslot=%d "
-         "maxPacket=%u urb=%zuB depth=%d",
+         "nominalPacket=%u maxPacket=%u urbBytes=%zu depth=%d",
          static_cast<long long>(handle), stream->fd, endpoint, feedbackEndpoint, sampleRate,
-         channels, subslotBytes, stream->maxPacketBytes, bytesPerUrb, kUrbsInFlight);
+         channels, subslotBytes, stream->nominalPacketBytes, stream->maxPacketBytes, bytesPerUrb,
+         kUrbsInFlight);
     return handle;
 }
 
@@ -665,13 +914,33 @@ Java_com_sertum_player_audio_uac2_Uac2Transport_nativeStart(JNIEnv *, jobject, j
     // close joins it. Starting again on top of that joinable thread would make the assignment below
     // call std::terminate, so reap the finished thread first.
     if (stream->pump.joinable()) stream->pump.join();
+
+    // What the decoder has already queued at start, and whether it is frame-aligned. A nonzero
+    // remainder means a writer ended mid-frame: packet sizing cannot repair that, and the DAC would
+    // render channel-swapped PCM, so the number belongs beside the transport's health counters.
+    size_t ringBytes = 0;
+    size_t ringRemainder = 0;
+    {
+        std::lock_guard<std::mutex> ringLock(stream->ringMutex);
+        ringBytes = stream->ring.count;
+        ringRemainder = stream->frameBytes > 0
+            ? ringBytes % static_cast<size_t>(stream->frameBytes)
+            : 0;
+    }
+    LOGI("start: ringBytes=%zu frameAlignRemainder=%zu frameBytes=%d ringCapacity=%zu "
+         "clamped=%lld submitFail=%lld feedbackAbnormal=%lld feedbackRejected=%lld",
+         ringBytes, ringRemainder, stream->frameBytes, stream->ring.capacity,
+         stream->clampedPackets.load(), stream->submitFailures.load(),
+         stream->feedbackAbnormal.load(), stream->feedbackRejected.load());
+
     for (auto &slot : stream->slots) {
         if (!submitSlot(stream.get(), slot)) {
-            // Roll back what did go out, so a failed start leaves no half-queued stream behind.
-            for (auto &other : stream->slots) {
-                if (other.inFlight.exchange(false)) ioctl(stream->fd, USBDEVFS_DISCARDURB, other.urb);
-            }
-            LOGE("start failed: errno=%d", errno);
+            const int code = errno;
+            // Roll back everything that did go out. Reuse teardown so the cancelled URBs are reaped
+            // like any other: the old inline discard returned without waiting, and the close that
+            // followed then freed URBs the kernel still owned.
+            teardown(stream.get());
+            LOGE("start failed: errno=%d %s", code, strerror(code));
             return JNI_FALSE;
         }
     }

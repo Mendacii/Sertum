@@ -2,6 +2,7 @@ package com.sertum.player.ui.screens.settings
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,6 +49,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.sertum.player.R
 import com.sertum.player.SertumApplication
 import com.sertum.player.SERTUM_VERSION
+import com.sertum.player.audio.uac2.Uac2HardwareVolumeStatus
 import com.sertum.player.forcedLocaleFor
 import com.sertum.player.sertumBuildFingerprint
 import com.sertum.player.ui.components.OptionInfo
@@ -59,6 +62,7 @@ import com.sertum.player.ui.playback.OutputMode
 import com.sertum.player.ui.settings.LanguageOption
 import com.sertum.player.ui.settings.SettingsStateHolder
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(initialInfoSection: String? = null) {
@@ -69,6 +73,8 @@ fun SettingsScreen(initialInfoSection: String? = null) {
     // The coordinator is the authority on the output route; the tile follows it so an automatic
     // switch shows up here too.
     val outputMode by app.playbackController.outputMode.collectAsState()
+    val softwareVolumeEnabled by app.preferences.softwareVolumeEnabled.collectAsState()
+    val hardwareVolumeSupported by Uac2HardwareVolumeStatus.supported.collectAsState()
     val scanProgress by app.libraryScanner.progress.collectAsState()
     var safDirs by remember { mutableStateOf(app.safDirectoryStore.load()) }
     val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -243,6 +249,28 @@ fun SettingsScreen(initialInfoSection: String? = null) {
                     SettingsStateHolder.update { it.copy(autoExclusiveOnUsbAttach = next) }
                     app.preferences.setAutoExclusiveOnUsbAttach(next)
                 },
+            )
+            SettingsTile(
+                label = stringResource(R.string.settings_software_volume_short),
+                icon = Icons.Filled.VolumeUp,
+                emphasis = TileEmphasis.TOGGLE,
+                selected = softwareVolumeEnabled,
+                onClick = {
+                    val enabling = !softwareVolumeEnabled
+                    app.preferences.setSoftwareVolumeEnabled(enabling)
+                    // Turning the fallback on while the music stream is at zero would apply a
+                    // zero gain and look broken; move it to ~40% once. The user can still lower
+                    // it afterwards, including back to silence with the volume keys.
+                    if (enabling) ensureMusicVolumeNotSilent(context)
+                },
+            )
+        }
+        if (hardwareVolumeSupported == false) {
+            Text(
+                text = stringResource(R.string.settings_hardware_volume_unavailable),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
 
@@ -450,6 +478,30 @@ private fun SectionTitle(
     }
 }
 
+
+/**
+ * A first-use guard for the software-volume fallback.
+ *
+ * Turning the toggle on at STREAM_MUSIC=0 would apply a zero gain and look like a broken player.
+ * Moving the music stream to roughly 40% once is the smallest intervention that produces sound;
+ * the user can still change it immediately with the volume keys.
+ */
+private fun ensureMusicVolumeNotSilent(context: Context) {
+    val audioManager = context.getSystemService(AudioManager::class.java) ?: return
+    val max = runCatching { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+        .getOrDefault(0)
+    if (max <= 0) return
+    val current = runCatching { audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) }
+        .getOrDefault(0)
+    if (current > 0) return
+    runCatching {
+        audioManager.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            (max * 0.4f).roundToInt(),
+            0,
+        )
+    }
+}
 
 /**
  * Opens the screen where this app can be exempted from the platform's background policy.

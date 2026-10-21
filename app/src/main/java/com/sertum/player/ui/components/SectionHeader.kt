@@ -58,6 +58,10 @@ object SectionInfo {
     val outputMode = listOf(
         OptionInfo(R.string.settings_info_output_auto, R.string.settings_info_output_auto_desc),
         OptionInfo(R.string.settings_info_output_usb, R.string.settings_info_output_usb_desc),
+        OptionInfo(
+            R.string.settings_info_software_volume,
+            R.string.settings_info_software_volume_desc,
+        ),
     )
     val language = listOf(
         OptionInfo(R.string.settings_info_language_system, R.string.settings_info_language_system_desc),

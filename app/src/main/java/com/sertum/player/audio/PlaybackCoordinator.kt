@@ -706,40 +706,69 @@ class PlaybackCoordinator(
      * every command ignored - playWhenReady already true, so play() is a no-op. Stopping and
      * re-preparing restarts the renderer from the current position, which is what a stuck player
      * needs and what the user was doing by hand before.
+     *
+     * This used to fire whenever playWhenReady was true and isPlaying was false with a frozen
+     * position. At the end of every track that condition is permanent - ENDED is not a stall - so
+     * the watchdog rebuilt the player roughly every nine seconds for hours, and each rebuild tore
+     * down and re-opened the UAC2 stream. The evidence is in the diagnostics log: 1652 recoveries,
+     * 1571 of them with state=4. It now only acts on BUFFERING, which is the shape it was written
+     * for, and stops after [MAX_STALL_RECOVERIES] attempts for the same position.
      */
     private fun watchForStalledPlayback() {
         scope.launch {
             var lastPosition = -1L
             var stalledSince = 0L
+            var recoveries = 0
             while (true) {
                 kotlinx.coroutines.delay(1_500)
-                val playing = player.playWhenReady && !player.isPlaying
-                if (!playing || _outputMode.value != OutputMode.USB_EXCLUSIVE) {
-                    stalledSince = 0L
-                    lastPosition = -1L
-                    continue
-                }
                 val position = player.currentPosition
-                if (position != lastPosition) {
-                    lastPosition = position
-                    stalledSince = 0L
-                    continue
-                }
-                if (stalledSince == 0L) {
-                    stalledSince = System.currentTimeMillis()
-                    continue
-                }
-                if (System.currentTimeMillis() - stalledSince < STALL_RECOVERY_MS) continue
-                diagnostics.log(
-                    DiagnosticLevel.WARNING,
-                    "playback",
-                    "stalled at ${position}ms (state=${player.playbackState}); re-preparing",
+                val decision = stallRecoveryDecision(
+                    state = player.playbackState,
+                    playWhenReady = player.playWhenReady,
+                    isPlaying = player.isPlaying,
+                    exclusiveRoute = _outputMode.value == OutputMode.USB_EXCLUSIVE,
+                    position = position,
+                    lastPosition = lastPosition,
+                    stalledMs = if (stalledSince == 0L) 0L else System.currentTimeMillis() - stalledSince,
+                    recoveries = recoveries,
                 )
-                stalledSince = 0L
-                runCatching {
-                    player.stop()
-                    player.prepare()
-                    if (player.playWhenReady) player.play()
+                when (decision) {
+                    StallDecision.None -> {
+                        // Progress, or a state where a stall is not ours to fix. Clear the attempt
+                        // budget only when the position actually moved, so a track that wedges
+                        // three times is left alone instead of being rebuilt forever.
+                        if (position != lastPosition) recoveries = 0
+                        lastPosition = position
+                        stalledSince = 0L
+                    }
+                    StallDecision.Observe -> {
+                        lastPosition = position
+                        stalledSince = System.currentTimeMillis()
+                    }
+                    StallDecision.Recover -> {
+                        diagnostics.log(
+                            DiagnosticLevel.WARNING,
+                            "playback",
+                            "buffering at ${position}ms for ${STALL_RECOVERY_MS}ms; re-preparing",
+                        )
+                        recoveries++
+                        stalledSince = 0L
+                        lastPosition = -1L
+                        runCatching {
+                            player.stop()
+                            player.prepare()
+                            if (player.playWhenReady) player.play()
+                        }
+                    }
+                    StallDecision.GiveUp -> {
+                        diagnostics.log(
+                            DiagnosticLevel.WARNING,
+                            "playback",
+                            "still buffering at ${position}ms after $MAX_STALL_RECOVERIES recoveries; leaving it alone",
+                        )
+                        stalledSince = 0L
+                        recoveries = 0
+                    }
                 }
             }
         }
@@ -880,7 +909,11 @@ class PlaybackCoordinator(
         diagnostics.log(
             DiagnosticLevel.ERROR,
             "playback",
-            "track=${track?.title ?: "?"} code=${error.errorCodeName} message=${error.message ?: ""}",
+            // The cause is what names an otherwise anonymous code: ERROR_CODE_TIMEOUT carries
+            // "Unexpected runtime error" as its message, and only the cause says whether the player
+            // was stuck (StuckPlayerException.stuckType) or a write genuinely failed.
+            "track=${track?.title ?: "?"} code=${error.errorCodeName} " +
+                "message=${error.message ?: ""} cause=${error.cause ?: "none"}",
         )
         track?.let { scope.launch { markTrackUnplayable(it.id) } }
         val decision = errorPolicy.onTrackFailed()
@@ -1044,7 +1077,44 @@ class PlaybackCoordinator(
         private const val DETACH_CONFIRM_MS = 1_200L
 
         /** How long a renderer may report playing without moving before it is restarted. */
-        private const val STALL_RECOVERY_MS = 5_000L
+        /**
+         * What [watchForStalledPlayback] should do on this tick.
+         *
+         * Extracted so the condition can be tested without a player: the first version was only
+         * correct while a track was playing, and nothing asserted what happened at ENDED.
+         */
+        internal enum class StallDecision { None, Observe, Recover, GiveUp }
+
+        /**
+         * Only BUFFERING counts as stuck.
+         *
+         * ENDED and IDLE are terminal states, and READY with isPlaying=false is a pause Media3
+         * chose (focus loss, ducking) - re-preparing there tears down and rebuilds the audio
+         * output for no reason, which on the USB route means a stream re-open and an audible gap.
+         */
+        internal fun stallRecoveryDecision(
+            state: Int,
+            playWhenReady: Boolean,
+            isPlaying: Boolean,
+            exclusiveRoute: Boolean,
+            position: Long,
+            lastPosition: Long,
+            stalledMs: Long,
+            recoveries: Int,
+        ): StallDecision {
+            if (!exclusiveRoute || !playWhenReady) return StallDecision.None
+            if (state != Player.STATE_BUFFERING) return StallDecision.None
+            if (position != lastPosition) return StallDecision.Observe
+            if (stalledMs == 0L) return StallDecision.Observe
+            if (stalledMs < STALL_RECOVERY_MS) return StallDecision.Observe
+            if (recoveries >= MAX_STALL_RECOVERIES) return StallDecision.GiveUp
+            if (isPlaying) return StallDecision.None
+            return StallDecision.Recover
+        }
+
+        /** Enough attempts to survive a slow decoder, few enough to never loop. */
+        private const val MAX_STALL_RECOVERIES = 3
+        private const val STALL_RECOVERY_MS = 15_000L
     }
 }
 

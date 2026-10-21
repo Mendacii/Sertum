@@ -47,6 +47,49 @@ class Uac2DescriptorTest {
     }
 
     @Test
+    fun `parses the feature unit and records its control bitmap`() {
+        val info = parseUac2Descriptors(fixture())
+        val unit = info.featureUnit
+        assertThat(unit).isNotNull()
+        assertThat(unit!!.unitId).isEqualTo(0x0a)
+        assertThat(unit.sourceId).isEqualTo(0x03)
+        // The captured DAWN PRO2 descriptor has no master volume bit and 0x0c (bass/mid) on both
+        // channels. That is a fact about the fixture, not a reason to assume volume works: the
+        // runtime GET_MIN/GET_MAX result is the gate for any write.
+        assertThat(unit.masterControlBitmap).isEqualTo(0x00000000)
+        assertThat(unit.channelControlBitmaps).containsExactly(0x0c, 0x0c).inOrder()
+        assertThat(unit.supportsVolume).isFalse()
+    }
+
+    @Test
+    fun `recognises a volume bit in a synthetic feature unit`() {
+        val withVolume = parseUac2Descriptors(featureUnitDescriptor(0x00000003))
+        assertThat(withVolume.featureUnit).isNotNull()
+        assertThat(withVolume.featureUnit!!.supportsVolume).isTrue()
+
+        val withoutVolume = parseUac2Descriptors(featureUnitDescriptor(0x0000000c))
+        assertThat(withoutVolume.featureUnit).isNotNull()
+        assertThat(withoutVolume.featureUnit!!.supportsVolume).isFalse()
+    }
+
+    private fun featureUnitDescriptor(controlBitmap: Int): ByteArray {
+        val bytes = mutableListOf<Byte>()
+        fun u8(value: Int) = bytes.add(value.toByte())
+
+        // AudioControl interface (class 1, subclass 1), so the parser accepts the CS_INTERFACE
+        // descriptor that follows.
+        u8(9); u8(0x04); u8(0); u8(0); u8(0); u8(0x01); u8(0x01); u8(0); u8(0)
+        // FEATURE_UNIT, unit 0x0a, source 0x03, one 32-bit master control bitmap, iFeature 0.
+        u8(10); u8(0x24); u8(0x06); u8(0x0a); u8(0x03)
+        u8(controlBitmap and 0xFF)
+        u8((controlBitmap shr 8) and 0xFF)
+        u8((controlBitmap shr 16) and 0xFF)
+        u8((controlBitmap shr 24) and 0xFF)
+        u8(0)
+        return bytes.toByteArray()
+    }
+
+    @Test
     fun `a truncated blob does not throw`() {
         // A cut chain must not crash the parser. Counts are not asserted: truncation can leave a
         // later interface's endpoint adjacent to an earlier format descriptor, which is not a

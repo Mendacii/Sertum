@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sertum.player.audio.backend.PreferHardwareCodecSelector
 import com.sertum.player.audio.backend.RoutedAudioOutputProvider
 import com.sertum.player.audio.extractor.SertumExtractorsFactory
+import com.sertum.player.data.diagnostics.DiagnosticsStore
 
 /**
  * Owns the Media3 player. Audio output is routed by [router]:
@@ -21,9 +22,16 @@ import com.sertum.player.audio.extractor.SertumExtractorsFactory
  * back to 24-bit PCM).
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-class PlayerEngine(context: Context) {
+class PlayerEngine(
+    context: Context,
+    /**
+     * The app's single diagnostics store. Only the debug PCM tap reads it; the router treats it as
+     * an optional sink, so a test or a future caller without one stays on the no-tap path.
+     */
+    diagnostics: DiagnosticsStore? = null,
+) {
 
-    val router = RoutedAudioOutputProvider(context.applicationContext)
+    val router = RoutedAudioOutputProvider(context.applicationContext, diagnostics)
 
     private val renderersFactory = DefaultRenderersFactory(context)
         .setEnableAudioFloatOutput(true)

@@ -15,6 +15,35 @@ data class Uac2Format(
     val maxPacketSize: Int,
 )
 
+/**
+ * One UAC2 Feature Unit, as advertised by the AudioControl interface.
+ *
+ * The control bitmaps are 32-bit little-endian values. D1 is Volume on the master control
+ * (`bmaControls(0)`) and on each per-channel control. A device can expose the unit for other
+ * controls - the DAWN PRO2 fixture advertises `0x0c` (bass/mid) on its two channels and no volume
+ * bit at all - so [supportsVolume] must be read rather than assumed from the unit's presence.
+ *
+ * The bitmap is not used as the final gate for a write: the runtime GET_MIN/GET_MAX result is,
+ * because the descriptor and the control endpoint can disagree. The bitmap is logged so any
+ * mismatch is visible in diagnostics, but a successful range read is the evidence that a write is
+ * allowed.
+ */
+data class Uac2FeatureUnit(
+    val unitId: Int,
+    val sourceId: Int,
+    val masterControlBitmap: Int,
+    val channelControlBitmaps: List<Int>,
+) {
+    val supportsVolume: Boolean
+        get() = (masterControlBitmap and CONTROL_VOLUME) != 0 ||
+            channelControlBitmaps.any { (it and CONTROL_VOLUME) != 0 }
+
+    companion object {
+        /** D1 in the UAC2 Feature Unit bmaControls bitmap. */
+        const val CONTROL_VOLUME: Int = 0x0002
+    }
+}
+
 data class Uac2DescriptorInfo(
     val clockSourceId: Int?,
     val audioControlInterfaceNumber: Int?,
@@ -25,6 +54,11 @@ data class Uac2DescriptorInfo(
      */
     val feedbackEndpoint: Int?,
     val formats: List<Uac2Format>,
+    /**
+     * The first Feature Unit that advertises volume, or the first Feature Unit when none does.
+     * Null when the AudioControl interface has no Feature Unit at all.
+     */
+    val featureUnit: Uac2FeatureUnit? = null,
 ) {
     /** The deepest format that does not exceed [bitDepth], falling back to the shallowest one. */
     fun formatForBitDepth(bitDepth: Int): Uac2Format? =
@@ -39,6 +73,7 @@ private const val CLASS_AUDIO = 0x01
 private const val SUBCLASS_AUDIOCONTROL = 0x01
 private const val SUBCLASS_AUDIOSTREAMING = 0x02
 private const val CS_CLOCK_SOURCE = 0x0A
+private const val CS_FEATURE_UNIT = 0x06
 private const val CS_FORMAT_TYPE = 0x02
 private const val FORMAT_TYPE_I = 0x01
 private const val ENDPOINT_TYPE_MASK = 0x03
@@ -50,6 +85,7 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
     var audioControlInterface: Int? = null
     var streamingInterface: Int? = null
     var feedbackEndpoint: Int? = null
+    var featureUnit: Uac2FeatureUnit? = null
     val formats = mutableListOf<Uac2Format>()
 
     var currentSubclass = -1
@@ -82,8 +118,35 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
             }
             DESCRIPTOR_CS_INTERFACE -> when {
                 currentSubclass == SUBCLASS_AUDIOCONTROL && length >= 4 -> {
-                    if ((raw[payload].toInt() and 0xFF) == CS_CLOCK_SOURCE) {
-                        clockSourceId = raw[payload + 1].toInt() and 0xFF
+                    when (raw[payload].toInt() and 0xFF) {
+                        CS_CLOCK_SOURCE -> clockSourceId = raw[payload + 1].toInt() and 0xFF
+                        CS_FEATURE_UNIT -> if (length >= 10) {
+                            // Layout after the 2-byte header: bDescriptorSubtype, bUnitID,
+                            // bSourceID, then one 32-bit bmaControls per master/channel, then
+                            // iFeature. For the DAWN PRO2 this is unit 0x0a, source 0x03,
+                            // master=0x00000000, channels=0x0000000c each.
+                            val unitId = raw[payload + 1].toInt() and 0xFF
+                            val sourceId = raw[payload + 2].toInt() and 0xFF
+                            val controlBytes = length - 6
+                            val controlCount = controlBytes / 4
+                            if (controlCount >= 1) {
+                                val bitmaps = (0 until controlCount).map { index ->
+                                    readControlBitmap(raw, payload + 3 + index * 4)
+                                }
+                                val candidate = Uac2FeatureUnit(
+                                    unitId = unitId,
+                                    sourceId = sourceId,
+                                    masterControlBitmap = bitmaps.first(),
+                                    channelControlBitmaps = bitmaps.drop(1),
+                                )
+                                val existing = featureUnit
+                                if (existing == null ||
+                                    (!existing.supportsVolume && candidate.supportsVolume)
+                                ) {
+                                    featureUnit = candidate
+                                }
+                            }
+                        }
                     }
                 }
                 currentSubclass == SUBCLASS_AUDIOSTREAMING && length >= 6 -> {
@@ -129,5 +192,12 @@ fun parseUac2Descriptors(raw: ByteArray): Uac2DescriptorInfo {
         streamingInterface,
         feedbackEndpoint,
         formats,
+        featureUnit,
     )
 }
+
+private fun readControlBitmap(raw: ByteArray, offset: Int): Int =
+    (raw[offset].toInt() and 0xFF) or
+        ((raw[offset + 1].toInt() and 0xFF) shl 8) or
+        ((raw[offset + 2].toInt() and 0xFF) shl 16) or
+        ((raw[offset + 3].toInt() and 0xFF) shl 24)

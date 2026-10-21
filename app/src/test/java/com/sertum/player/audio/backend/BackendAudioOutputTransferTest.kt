@@ -109,7 +109,43 @@ class BackendAudioOutputTransferTest {
     private fun BackendAudioOutput.writeToEnd(buffer: ByteBuffer, frameCount: Int): Boolean =
         write(buffer, frameCount, C.TIME_END_OF_SOURCE)
 
+    private fun render(
+        samples: List<Float>,
+        softwareEnabled: Boolean,
+        gain: Float,
+    ): ByteArray {
+        val tapped = mutableListOf<ByteArray>()
+        val output = BackendAudioOutput(
+            RecordingBackend(),
+            outputConfig(C.ENCODING_PCM_FLOAT),
+            targetBitDepth = 24,
+            playWhenReady = { true },
+            pcmTap = { tapped += it },
+            softwareVolumeEnabled = { softwareEnabled },
+            softwareVolumeGain = { gain },
+        )
+        output.writeToEnd(floatLe(samples), samples.size)
+        return tapped.concatAll()
+    }
+
     // ---- the audit ---------------------------------------------------------
+
+    @Test
+    fun `software volume off ignores the gain and keeps the bit-exact bytes`() {
+        val samples = listOf(0.5f, -0.5f, 0.25f, -0.25f)
+        assertThat(render(samples, softwareEnabled = false, gain = 0f))
+            .isEqualTo(expectedPacked24(samples))
+        assertThat(render(samples, softwareEnabled = false, gain = 0f))
+            .isEqualTo(render(samples, softwareEnabled = false, gain = 1f))
+    }
+
+    @Test
+    fun `software volume on scales the float samples before packing`() {
+        val samples = listOf(0.5f, -0.5f)
+        val output = render(samples, softwareEnabled = true, gain = 0.25f)
+        assertThat(packed24ToInts(output, channelCount = 2))
+            .isEqualTo(listOf(1_048_576, -1_048_576))
+    }
 
     @Test
     fun `float path to packed 24 is bit exact for every 24-bit sample value`() {

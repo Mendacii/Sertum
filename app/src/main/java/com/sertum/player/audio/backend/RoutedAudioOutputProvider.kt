@@ -4,9 +4,14 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import com.sertum.player.BuildConfig
 import com.sertum.player.audio.toOutputRef
 import com.sertum.player.audio.usbOutputDeviceId
+import com.sertum.player.data.diagnostics.DiagnosticLevel
+import com.sertum.player.data.diagnostics.DiagnosticsStore
 import com.sertum.player.domain.playback.AudioOutputBackend
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Routes Media3 audio output between the system AudioTrack provider
@@ -16,12 +21,38 @@ import com.sertum.player.domain.playback.AudioOutputBackend
  * from scratch at the target sample rate (PRD 7.13).
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-class RoutedAudioOutputProvider(context: Context) :
-    androidx.media3.exoplayer.audio.ForwardingAudioOutputProvider(
-        androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider.Builder(context).build(),
-    ) {
+class RoutedAudioOutputProvider(
+    context: Context,
+    /**
+     * Diagnostics sink for the debug-only PCM tap. `null` keeps every build on the no-tap path; the
+     * app always injects its single store, so the tap's lines land in the same file as the transport
+     * and route logs.
+     */
+    private val diagnostics: DiagnosticsStore? = null,
+) : androidx.media3.exoplayer.audio.ForwardingAudioOutputProvider(
+    androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider.Builder(context).build(),
+) {
 
     private val appContext = context.applicationContext
+
+    /** A-22 fallback: system music volume -> gain, only when the reader turns it on. */
+    private val softwareVolume = SoftwareVolumeController(appContext)
+
+    /**
+     * Writer for the debug PCM tap, or null when debug is off or no store was injected.
+     *
+     * The tap computes its numbers on the playback thread (the bytes are there), but a diagnostics
+     * line is file I/O and has no business delaying an audio callback. One daemon thread serialises
+     * the lines in order; release shuts it down.
+     */
+    private val pcmTapWriter: ExecutorService? =
+        if (BuildConfig.DEBUG && diagnostics != null) {
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "sertum-pcm-tap").apply { isDaemon = true }
+            }
+        } else {
+            null
+        }
 
     @Volatile
     var exclusiveBackend: AudioOutputBackend? = null
@@ -190,12 +221,41 @@ class RoutedAudioOutputProvider(context: Context) :
             pendingOutputBitDepth,
             playWhenReady = { playWhenReady },
             deviceId = usbDeviceId() ?: 0,
+            pcmTap = debugPcmTap(outputConfig, Integer.bitCount(outputConfig.channelMask)),
+            softwareVolumeEnabled = { softwareVolume.isEnabled() },
+            softwareVolumeGain = { softwareVolume.gain() },
         ).also { exclusiveOutputs.add(it) }
+    }
+
+    /**
+     * The debug-only per-second PCM fingerprint, or null where it must not exist.
+     *
+     * `BuildConfig.DEBUG` is the compile-time gate: in release this body reduces to `return null`,
+     * so the adapter takes its no-tap path and nothing is buffered, hashed or written.
+     */
+    private fun debugPcmTap(
+        outputConfig: androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig,
+        channels: Int,
+    ): ((ByteArray) -> Unit)? {
+        if (!BuildConfig.DEBUG) return null
+        val writer = pcmTapWriter ?: return null
+        val store = diagnostics ?: return null
+        val sampleRate = outputConfig.sampleRate
+        if (sampleRate <= 0 || channels <= 0) return null
+        val aggregator = PcmTapAggregator(sampleRate, channels, pendingOutputBitDepth) { line ->
+            // The aggregator calls this from the playback thread; hop to the writer so file I/O
+            // never sits inside an audio drain. A shutdown race is swallowed by the aggregator's
+            // sink guard and only costs that one line.
+            writer.execute { store.log(DiagnosticLevel.INFO, "pcm", line) }
+        }
+        return aggregator::accept
     }
 
     override fun release() {
         exclusiveOutputs.forEach { it.release() }
         exclusiveOutputs.clear()
+        softwareVolume.close()
+        pcmTapWriter?.shutdown()
         super.release()
     }
 }

@@ -88,6 +88,8 @@
     <string name="settings_output_mode">输出模式</string>
     <string name="settings_output_usb_exclusive">USB 独占</string>
     <string name="settings_auto_exclusive">插上自动独占</string>
+    <string name="settings_software_volume_short">软件音量</string>
+    <string name="settings_hardware_volume_unavailable">此 DAC 不提供硬件音量控制。在 USB 独占模式下，请在 DAC 上调节音量。</string>
     <string name="settings_language">语言</string>
     <string name="settings_language_system">跟随系统</string>
     <string name="settings_language_zh">中文</string>
@@ -113,7 +115,9 @@
     <string name="settings_info_output_auto">自动/常规</string>
     <string name="settings_info_output_auto_desc">走系统音频通路。接 USB DAC 时自动路由到它，音量由系统控制。</string>
     <string name="settings_info_output_usb">USB 独占</string>
-    <string name="settings_info_output_usb_desc">绕过系统混音，直接以文件原始采样率输出到 USB DAC，追求 bit-perfect。需要 DAC 支持独占模式，且媒体音量拉到 100%。</string>
+    <string name="settings_info_output_usb_desc">绕过系统混音，直接以文件原始采样率输出到 USB DAC。要维持 bit-perfect，请保持软件音量关闭；只有启用回退时才使用系统媒体音量。</string>
+    <string name="settings_info_software_volume">软件音量</string>
+    <string name="settings_info_software_volume_desc">在送入 DAC 之前，用手机媒体音量在软件层缩放样本。这会改变样本、不是 bit-perfect，因此默认关闭。只有 DAC 不提供硬件音量控制时才需要开启。</string>
     <string name="settings_info_language_system">跟随系统</string>
     <string name="settings_info_language_system_desc">使用手机系统的语言设置，系统切成中文时界面也跟着变中文。</string>
     <string name="settings_info_language_zh">中文</string>
